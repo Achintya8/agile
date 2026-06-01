@@ -1,0 +1,221 @@
+Request Index,Meal Tag Input,Execution Mode,Cache Status (HIT/MISS),Prompt Tokens,Completion Tokens,Total Tokens,LLM Inference Cost ($),AWS Egress Fee ($),Total Transaction Cost ($),Carbon Footprint (g CO2e),AWS Hosting Grid Region,File Size (KB),S3 Expiration TTL (Days),AI Identified Meal,Calories (kcal),Protein (g),Carbs (g),Fat (g),AI Nutrition Breakdown / Explanation
+1,Meal (Pomegranate),Control,MISS,504,186,690,9.36e-05,4.11e-06,9.771e-05,732.9488,us-east-1,47.91,Infinite,Meal (Pomegranate),420,22,45,16,"[LOCAL SIMULATED] Elite Nutritionist Analysis:
+
+Having thoroughly analyzed the meal ""Meal (Pomegranate)"", we detected fresh ingredients of standard weights.
+
+Nutrition Breakdown:
+- Protein: 22g
+- Carbs: 45g
+- Fats: 16g
+
+Detailed Assessment: A balanced energy bowl containing complex grains, lean protein, healthy fats, and steamed vegetables."
+2,Pepperoni Pizza Slice,Control,MISS,474,180,654,8.955e-05,4.11e-06,9.366e-05,730.455,us-east-1,47.94,Infinite,Pepperoni Pizza Slice,290,12,32,12,"[LOCAL SIMULATED] Elite Nutritionist Analysis:
+
+Having thoroughly analyzed the meal ""Pepperoni Pizza Slice"", we detected fresh ingredients of standard weights.
+
+Nutrition Breakdown:
+- Protein: 12g
+- Carbs: 32g
+- Fats: 12g
+
+Detailed Assessment: One large slice of classic hand-tossed pepperoni pizza with mozzarella cheese and tomato sauce."
+3,Meal (Pot),Control,MISS,484,211,695,9.96e-05,3.82e-06,0.00010342,725.3012,us-east-1,44.54,Infinite,Meal (Pot),420,22,45,16,"[LOCAL SIMULATED] Elite Nutritionist Analysis:
+
+Having thoroughly analyzed the meal ""Meal (Pot)"", we detected fresh ingredients of standard weights.
+
+Nutrition Breakdown:
+- Protein: 22g
+- Carbs: 45g
+- Fats: 16g
+
+Detailed Assessment: A balanced energy bowl containing complex grains, lean protein, healthy fats, and steamed vegetables."
+4,Pepperoni Pizza Slice,Control,MISS,512,190,702,9.54e-05,2.36e-06,9.776e-05,685.3062,us-east-1,27.49,Infinite,Pepperoni Pizza Slice,290,12,32,12,"[LOCAL SIMULATED] Elite Nutritionist Analysis:
+
+Having thoroughly analyzed the meal ""Pepperoni Pizza Slice"", we detected fresh ingredients of standard weights.
+
+Nutrition Breakdown:
+- Protein: 12g
+- Carbs: 32g
+- Fats: 12g
+
+Detailed Assessment: One large slice of classic hand-tossed pepperoni pizza with mozzarella cheese and tomato sauce."
+5,Meal (Ping-pong ball),Control,MISS,514,203,717,9.945e-05,9.6e-07,0.00010041000000000001,647.6387,us-east-1,11.18,Infinite,Meal (Ping-pong ball),420,22,45,16,"[LOCAL SIMULATED] Elite Nutritionist Analysis:
+
+Having thoroughly analyzed the meal ""Meal (Ping-pong ball)"", we detected fresh ingredients of standard weights.
+
+Nutrition Breakdown:
+- Protein: 22g
+- Carbs: 45g
+- Fats: 16g
+
+Detailed Assessment: A balanced energy bowl containing complex grains, lean protein, healthy fats, and steamed vegetables."
+6,Meal (Handkerchief),Control,MISS,496,193,689,9.51e-05,5.6e-06,0.0001007,774.0362,us-east-1,65.24,Infinite,Meal (Handkerchief),420,22,45,16,"[LOCAL SIMULATED] Elite Nutritionist Analysis:
+
+Having thoroughly analyzed the meal ""Meal (Handkerchief)"", we detected fresh ingredients of standard weights.
+
+Nutrition Breakdown:
+- Protein: 22g
+- Carbs: 45g
+- Fats: 16g
+
+Detailed Assessment: A balanced energy bowl containing complex grains, lean protein, healthy fats, and steamed vegetables."
+7,Meal (Hot pot),Control,MISS,497,210,707,0.00010028,4.65e-06,0.00010493,749.0037,us-east-1,54.16,Infinite,Meal (Hot pot),420,22,45,16,"[LOCAL SIMULATED] Elite Nutritionist Analysis:
+
+Having thoroughly analyzed the meal ""Meal (Hot pot)"", we detected fresh ingredients of standard weights.
+
+Nutrition Breakdown:
+- Protein: 22g
+- Carbs: 45g
+- Fats: 16g
+
+Detailed Assessment: A balanced energy bowl containing complex grains, lean protein, healthy fats, and steamed vegetables."
+8,Meal (Acorn squash),Control,MISS,510,218,728,0.00010365,4.7e-06,0.00010835,751.9725,us-east-1,54.78,Infinite,Meal (Acorn squash),420,22,45,16,"[LOCAL SIMULATED] Elite Nutritionist Analysis:
+
+Having thoroughly analyzed the meal ""Meal (Acorn squash)"", we detected fresh ingredients of standard weights.
+
+Nutrition Breakdown:
+- Protein: 22g
+- Carbs: 45g
+- Fats: 16g
+
+Detailed Assessment: A balanced energy bowl containing complex grains, lean protein, healthy fats, and steamed vegetables."
+9,Meal (Plate),Control,MISS,478,195,673,9.435e-05,3.47e-06,9.782000000000001e-05,714.02,us-east-1,40.45,Infinite,Meal (Plate),420,22,45,16,"[LOCAL SIMULATED] Elite Nutritionist Analysis:
+
+Having thoroughly analyzed the meal ""Meal (Plate)"", we detected fresh ingredients of standard weights.
+
+Nutrition Breakdown:
+- Protein: 22g
+- Carbs: 45g
+- Fats: 16g
+
+Detailed Assessment: A balanced energy bowl containing complex grains, lean protein, healthy fats, and steamed vegetables."
+10,Meal (Burrito),Control,MISS,487,198,685,9.592e-05,3.3e-06,9.922e-05,710.0538,us-east-1,38.42,Infinite,Meal (Burrito),420,22,45,16,"[LOCAL SIMULATED] Elite Nutritionist Analysis:
+
+Having thoroughly analyzed the meal ""Meal (Burrito)"", we detected fresh ingredients of standard weights.
+
+Nutrition Breakdown:
+- Protein: 22g
+- Carbs: 45g
+- Fats: 16g
+
+Detailed Assessment: A balanced energy bowl containing complex grains, lean protein, healthy fats, and steamed vegetables."
+11,Meal (Pomegranate),Control,MISS,507,181,688,9.232e-05,4.11e-06,9.643e-05,732.8062,us-east-1,47.91,Infinite,Meal (Pomegranate),420,22,45,16,"[LOCAL SIMULATED] Elite Nutritionist Analysis:
+
+Having thoroughly analyzed the meal ""Meal (Pomegranate)"", we detected fresh ingredients of standard weights.
+
+Nutrition Breakdown:
+- Protein: 22g
+- Carbs: 45g
+- Fats: 16g
+
+Detailed Assessment: A balanced energy bowl containing complex grains, lean protein, healthy fats, and steamed vegetables."
+12,Meal (Wok),Control,MISS,475,218,693,0.00010103,4.54e-06,0.00010557,744.9425,us-east-1,52.87,Infinite,Meal (Wok),420,22,45,16,"[LOCAL SIMULATED] Elite Nutritionist Analysis:
+
+Having thoroughly analyzed the meal ""Meal (Wok)"", we detected fresh ingredients of standard weights.
+
+Nutrition Breakdown:
+- Protein: 22g
+- Carbs: 45g
+- Fats: 16g
+
+Detailed Assessment: A balanced energy bowl containing complex grains, lean protein, healthy fats, and steamed vegetables."
+13,Meal (Pomegranate),Control,MISS,510,195,705,9.675e-05,4.11e-06,0.00010085999999999999,734.0175,us-east-1,47.91,Infinite,Meal (Pomegranate),420,22,45,16,"[LOCAL SIMULATED] Elite Nutritionist Analysis:
+
+Having thoroughly analyzed the meal ""Meal (Pomegranate)"", we detected fresh ingredients of standard weights.
+
+Nutrition Breakdown:
+- Protein: 22g
+- Carbs: 45g
+- Fats: 16g
+
+Detailed Assessment: A balanced energy bowl containing complex grains, lean protein, healthy fats, and steamed vegetables."
+14,Meal (Plate),Control,MISS,489,197,686,9.577e-05,1.96e-06,9.773e-05,673.0987,us-east-1,22.83,Infinite,Meal (Plate),420,22,45,16,"[LOCAL SIMULATED] Elite Nutritionist Analysis:
+
+Having thoroughly analyzed the meal ""Meal (Plate)"", we detected fresh ingredients of standard weights.
+
+Nutrition Breakdown:
+- Protein: 22g
+- Carbs: 45g
+- Fats: 16g
+
+Detailed Assessment: A balanced energy bowl containing complex grains, lean protein, healthy fats, and steamed vegetables."
+15,Meal (Palace),Control,MISS,497,218,715,0.00010268,2.73e-06,0.00010541,696.35,us-east-1,31.75,Infinite,Meal (Palace),420,22,45,16,"[LOCAL SIMULATED] Elite Nutritionist Analysis:
+
+Having thoroughly analyzed the meal ""Meal (Palace)"", we detected fresh ingredients of standard weights.
+
+Nutrition Breakdown:
+- Protein: 22g
+- Carbs: 45g
+- Fats: 16g
+
+Detailed Assessment: A balanced energy bowl containing complex grains, lean protein, healthy fats, and steamed vegetables."
+16,Meal (Pomegranate),Control,MISS,487,212,699,0.00010013,4.11e-06,0.00010424,733.59,us-east-1,47.91,Infinite,Meal (Pomegranate),420,22,45,16,"[LOCAL SIMULATED] Elite Nutritionist Analysis:
+
+Having thoroughly analyzed the meal ""Meal (Pomegranate)"", we detected fresh ingredients of standard weights.
+
+Nutrition Breakdown:
+- Protein: 22g
+- Carbs: 45g
+- Fats: 16g
+
+Detailed Assessment: A balanced energy bowl containing complex grains, lean protein, healthy fats, and steamed vegetables."
+17,Meal (Pot),Control,MISS,470,212,682,9.885e-05,3.82e-06,0.00010267,724.375,us-east-1,44.54,Infinite,Meal (Pot),420,22,45,16,"[LOCAL SIMULATED] Elite Nutritionist Analysis:
+
+Having thoroughly analyzed the meal ""Meal (Pot)"", we detected fresh ingredients of standard weights.
+
+Nutrition Breakdown:
+- Protein: 22g
+- Carbs: 45g
+- Fats: 16g
+
+Detailed Assessment: A balanced energy bowl containing complex grains, lean protein, healthy fats, and steamed vegetables."
+18,Pepperoni Pizza Slice,Control,MISS,512,184,696,9.36e-05,2.36e-06,9.596e-05,684.8787,us-east-1,27.49,Infinite,Pepperoni Pizza Slice,290,12,32,12,"[LOCAL SIMULATED] Elite Nutritionist Analysis:
+
+Having thoroughly analyzed the meal ""Pepperoni Pizza Slice"", we detected fresh ingredients of standard weights.
+
+Nutrition Breakdown:
+- Protein: 12g
+- Carbs: 32g
+- Fats: 12g
+
+Detailed Assessment: One large slice of classic hand-tossed pepperoni pizza with mozzarella cheese and tomato sauce."
+19,Meal (Handkerchief),Control,MISS,496,204,700,9.84e-05,5.6e-06,0.00010400000000000001,774.82,us-east-1,65.24,Infinite,Meal (Handkerchief),420,22,45,16,"[LOCAL SIMULATED] Elite Nutritionist Analysis:
+
+Having thoroughly analyzed the meal ""Meal (Handkerchief)"", we detected fresh ingredients of standard weights.
+
+Nutrition Breakdown:
+- Protein: 22g
+- Carbs: 45g
+- Fats: 16g
+
+Detailed Assessment: A balanced energy bowl containing complex grains, lean protein, healthy fats, and steamed vegetables."
+20,Meal (Ping-pong ball),Control,MISS,509,194,703,9.637e-05,9.6e-07,9.733e-05,646.6412,us-east-1,11.18,Infinite,Meal (Ping-pong ball),420,22,45,16,"[LOCAL SIMULATED] Elite Nutritionist Analysis:
+
+Having thoroughly analyzed the meal ""Meal (Ping-pong ball)"", we detected fresh ingredients of standard weights.
+
+Nutrition Breakdown:
+- Protein: 22g
+- Carbs: 45g
+- Fats: 16g
+
+Detailed Assessment: A balanced energy bowl containing complex grains, lean protein, healthy fats, and steamed vegetables."
+21,Meal (Pomegranate),Experimental,MISS,88,48,136,2.1e-05,2.86e-06,2.386e-05,6.7392,eu-west-1,33.28,7,Meal (Pomegranate),420,22,45,16,"A balanced energy bowl containing complex grains, lean protein, healthy fats, and steamed vegetables."
+22,Pepperoni Pizza Slice,Experimental,MISS,81,35,116,1.657e-05,2.95e-06,1.952e-05,6.7208,eu-west-1,34.32,7,Pepperoni Pizza Slice,290,12,32,12,One large slice of classic hand-tossed pepperoni pizza with mozzarella cheese and tomato sauce.
+23,Meal (Pot),Experimental,MISS,86,43,129,1.935e-05,2.72e-06,2.207e-05,6.6526,eu-west-1,31.64,7,Meal (Pot),420,22,45,16,"A balanced energy bowl containing complex grains, lean protein, healthy fats, and steamed vegetables."
+24,Pepperoni Pizza Slice,Experimental,MISS,90,40,130,1.875e-05,1.5e-06,2.0249999999999998e-05,6.0896,eu-west-1,17.49,7,Pepperoni Pizza Slice,290,12,32,12,One large slice of classic hand-tossed pepperoni pizza with mozzarella cheese and tomato sauce.
+25,Meal (Ping-pong ball),Experimental,MISS,91,45,136,2.032e-05,3e-07,2.062e-05,5.548,eu-west-1,3.5,7,Meal (Ping-pong ball),420,22,45,16,"A balanced energy bowl containing complex grains, lean protein, healthy fats, and steamed vegetables."
+26,Meal (Handkerchief),Experimental,MISS,90,45,135,2.025e-05,3.54e-06,2.379e-05,7.0558,eu-west-1,41.27,7,Meal (Handkerchief),420,22,45,16,"A balanced energy bowl containing complex grains, lean protein, healthy fats, and steamed vegetables."
+27,Meal (Hot pot),Experimental,MISS,80,45,125,1.95e-05,3.56e-06,2.306e-05,7.033,eu-west-1,41.45,7,Meal (Hot pot),420,22,45,16,"A balanced energy bowl containing complex grains, lean protein, healthy fats, and steamed vegetables."
+28,Meal (Acorn squash),Experimental,MISS,84,37,121,1.74e-05,3.11e-06,2.051e-05,6.8138,eu-west-1,36.27,7,Meal (Acorn squash),420,22,45,16,"A balanced energy bowl containing complex grains, lean protein, healthy fats, and steamed vegetables."
+29,Meal (Plate),Experimental,MISS,80,45,125,1.95e-05,2.37e-06,2.187e-05,6.481,eu-west-1,27.65,7,Meal (Plate),420,22,45,16,"A balanced energy bowl containing complex grains, lean protein, healthy fats, and steamed vegetables."
+30,Meal (Burrito),Experimental,MISS,81,48,129,2.047e-05,2.11e-06,2.2579999999999997e-05,6.3702,eu-west-1,24.58,7,Meal (Burrito),420,22,45,16,"A balanced energy bowl containing complex grains, lean protein, healthy fats, and steamed vegetables."
+31,Meal (Pomegranate),Experimental,HIT,0,0,0,0,2.86e-06,2.86e-06,0.002,eu-west-1,33.28,7,Meal (Pomegranate),420,22,45,16,"A balanced energy bowl containing complex grains, lean protein, healthy fats, and steamed vegetables."
+32,Meal (Wok),Experimental,MISS,80,38,118,1.74e-05,2.75e-06,2.015e-05,6.6364,eu-west-1,32.06,7,Meal (Wok),420,22,45,16,"A balanced energy bowl containing complex grains, lean protein, healthy fats, and steamed vegetables."
+33,Meal (Pomegranate),Experimental,HIT,0,0,0,0,2.86e-06,2.86e-06,0.002,eu-west-1,33.28,7,Meal (Pomegranate),420,22,45,16,"A balanced energy bowl containing complex grains, lean protein, healthy fats, and steamed vegetables."
+34,Meal (Plate),Experimental,MISS,82,38,120,1.755e-05,1.03e-06,1.8579999999999998e-05,5.8384,eu-west-1,11.96,7,Meal (Plate),420,22,45,16,"A balanced energy bowl containing complex grains, lean protein, healthy fats, and steamed vegetables."
+35,Meal (Palace),Experimental,MISS,80,44,124,1.92e-05,1.77e-06,2.0969999999999997e-05,6.1972,eu-west-1,20.63,7,Meal (Palace),420,22,45,16,"A balanced energy bowl containing complex grains, lean protein, healthy fats, and steamed vegetables."
+36,Meal (Pomegranate),Experimental,HIT,0,0,0,0,2.86e-06,2.86e-06,0.002,eu-west-1,33.28,7,Meal (Pomegranate),420,22,45,16,"A balanced energy bowl containing complex grains, lean protein, healthy fats, and steamed vegetables."
+37,Meal (Pot),Experimental,HIT,0,0,0,0,2.72e-06,2.72e-06,0.002,eu-west-1,31.64,7,Meal (Pot),420,22,45,16,"A balanced energy bowl containing complex grains, lean protein, healthy fats, and steamed vegetables."
+38,Pepperoni Pizza Slice,Experimental,HIT,0,0,0,0,1.5e-06,1.5e-06,0.002,eu-west-1,17.49,7,Pepperoni Pizza Slice,290,12,32,12,One large slice of classic hand-tossed pepperoni pizza with mozzarella cheese and tomato sauce.
+39,Meal (Handkerchief),Experimental,HIT,0,0,0,0,3.54e-06,3.54e-06,0.002,eu-west-1,41.27,7,Meal (Handkerchief),420,22,45,16,"A balanced energy bowl containing complex grains, lean protein, healthy fats, and steamed vegetables."
+40,Meal (Ping-pong ball),Experimental,HIT,0,0,0,0,3e-07,3e-07,0.002,eu-west-1,3.5,7,Meal (Ping-pong ball),420,22,45,16,"A balanced energy bowl containing complex grains, lean protein, healthy fats, and steamed vegetables."

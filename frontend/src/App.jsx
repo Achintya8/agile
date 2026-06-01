@@ -16,6 +16,11 @@ export default function App() {
   const [cumulativeCost, setCumulativeCost] = useState(0);
   const [budgetLimit, setBudgetLimit] = useState(0.50);
   const [budgetViolation, setBudgetViolation] = useState(false);
+
+  // Research Simulation & Analytics state
+  const [activeTab, setActiveTab] = useState('single'); // 'single' | 'simulation'
+  const [isSimulating, setIsSimulating] = useState(false);
+  const [hoveredPoint, setHoveredPoint] = useState(null);
   
   // Feedback
   const [errorMsg, setErrorMsg] = useState('');
@@ -167,6 +172,37 @@ export default function App() {
     }
   };
 
+  const handleSimulateSprint = async (sprintMode) => {
+    setIsSimulating(true);
+    setIsLoading(true);
+    setErrorMsg('');
+    setSuccessMsg('');
+
+    try {
+      const res = await fetch(`${API_BASE}/simulate-sprint`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: sprintMode })
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to simulate sprint');
+      }
+
+      setCumulativeCost(data.cumulativeCost);
+      await fetchTelemetry();
+      setSuccessMsg(`Sprint simulation completed! Successfully added ${data.logsCount} transactions.`);
+      setTimeout(() => setSuccessMsg(''), 4000);
+    } catch (err) {
+      console.error(err);
+      setErrorMsg(err.message);
+    } finally {
+      setIsSimulating(false);
+      setIsLoading(false);
+    }
+  };
+
   // ==========================================
   // METRICS CALCULATIONS (REAL-TIME TELEMETRY)
   // ==========================================
@@ -209,6 +245,401 @@ export default function App() {
   const budgetSpentPercent = Math.min((cumulativeCost / budgetLimit) * 100, 100);
   const isBudgetDanger = cumulativeCost >= budgetLimit;
   const isBudgetWarning = cumulativeCost >= budgetLimit * 0.7 && !isBudgetDanger;
+
+  // ==========================================
+  // RESEARCH PAPER METRICS & GRAPH CALCULATIONS
+  // ==========================================
+  // Group logs by mode
+  const controlLogs = logs.filter(log => log.mode === 'Control');
+  const expLogs = logs.filter(log => log.mode === 'Experimental');
+
+  // Control Vs Calculation: Vs = Σ(SPi * μi) / [CAWS + (Ttokens * ω)]
+  // We scale Vs by 100 to make it readable.
+  // SPi = 5. μi = 1.0 for Control. CAWS = calculatedVirtualCost + simulatedEgressFee. Ttokens_k = totalTokens / 1000. ω = 475.
+  const totalSP_Control = controlLogs.length * 5;
+  const totalCAWS_Control = controlLogs.reduce((sum, log) => sum + (log.calculatedVirtualCost || 0) + (log.simulatedEgressFee || 0), 0);
+  const totalTokens_Control = controlLogs.reduce((sum, log) => sum + (log.totalTokens || 0), 0);
+  const ttokensK_Control = totalTokens_Control / 1000;
+  const ω_Control = 475;
+  const denominator_Control = totalCAWS_Control + (ttokensK_Control * ω_Control);
+  const vs_Control = denominator_Control > 0 ? (totalSP_Control / denominator_Control) * 100 : 0;
+
+  // Experimental Vs Calculation:
+  // SPi = 5. μi = log.wasCached ? 1.5 : 1.0. CAWS = cost + egress. Ttokens_k = totalTokens / 1000. ω = 50.
+  const totalSP_Exp = expLogs.reduce((sum, log) => sum + (5 * (log.wasCached ? 1.5 : 1.0)), 0);
+  const totalCAWS_Exp = expLogs.reduce((sum, log) => sum + (log.calculatedVirtualCost || 0) + (log.simulatedEgressFee || 0), 0);
+  const totalTokens_Exp = expLogs.reduce((sum, log) => sum + (log.totalTokens || 0), 0);
+  const ttokensK_Exp = totalTokens_Exp / 1000;
+  const ω_Exp = 50;
+  const denominator_Exp = totalCAWS_Exp + (ttokensK_Exp * ω_Exp);
+  const vs_Exp = denominator_Exp > 0 ? (totalSP_Exp / denominator_Exp) * 100 : 0;
+
+  // Running costs for line chart
+  const controlCosts = [];
+  let sumCostControl = 0;
+  [...controlLogs].reverse().forEach(log => {
+    sumCostControl += (log.calculatedVirtualCost || 0) + (log.simulatedEgressFee || 0);
+    controlCosts.push(sumCostControl);
+  });
+
+  const expCosts = [];
+  let sumCostExp = 0;
+  [...expLogs].reverse().forEach(log => {
+    sumCostExp += (log.calculatedVirtualCost || 0) + (log.simulatedEgressFee || 0);
+    expCosts.push(sumCostExp);
+  });
+
+  // Carbon emissions totals
+  const controlCarbonTotal = controlLogs.reduce((sum, log) => sum + (log.carbonEmissionGrams || 0), 0);
+  const expCarbonTotal = expLogs.reduce((sum, log) => sum + (log.carbonEmissionGrams || 0), 0);
+
+  // Tokens breakdown
+  const controlPromptTokens = controlLogs.reduce((sum, log) => sum + (log.promptTokens || 0), 0);
+  const controlCandidateTokens = controlLogs.reduce((sum, log) => sum + (log.candidatesTokens || 0), 0);
+  const expPromptTokens = expLogs.reduce((sum, log) => sum + (log.promptTokens || 0), 0);
+  const expCandidateTokens = expLogs.reduce((sum, log) => sum + (log.candidatesTokens || 0), 0);
+
+  // Custom SVG Chart rendering helpers
+  const renderVelocityChart = () => {
+    const width = 360;
+    const height = 200;
+    const paddingLeft = 50;
+    const paddingRight = 20;
+    const paddingTop = 20;
+    const paddingBottom = 30;
+    const plotWidth = width - paddingLeft - paddingRight;
+    const plotHeight = height - paddingTop - paddingBottom;
+
+    const maxVal = Math.max(vs_Control, vs_Exp, 10) * 1.15;
+    const controlHeight = (vs_Control / maxVal) * plotHeight;
+    const expHeight = (vs_Exp / maxVal) * plotHeight;
+
+    return (
+      <svg width="100%" height="100%" viewBox={`0 0 ${width} ${height}`} className="svg-chart">
+        {[0, 0.25, 0.5, 0.75, 1].map((r, idx) => {
+          const y = paddingTop + plotHeight - (r * plotHeight);
+          const val = (r * maxVal).toFixed(1);
+          return (
+            <g key={idx}>
+              <line x1={paddingLeft} y1={y} x2={width - paddingRight} y2={y} stroke="rgba(255,255,255,0.07)" strokeDasharray="3,3" />
+              <text x={paddingLeft - 10} y={y + 4} fill="hsl(var(--text-muted))" fontSize="10" textAnchor="end" fontFamily="monospace">
+                {val}
+              </text>
+            </g>
+          );
+        })}
+        <line x1={paddingLeft} y1={paddingTop + plotHeight} x2={width - paddingRight} y2={paddingTop + plotHeight} stroke="rgba(255,255,255,0.2)" />
+        <line x1={paddingLeft} y1={paddingTop} x2={paddingLeft} y2={paddingTop + plotHeight} stroke="rgba(255,255,255,0.2)" />
+
+        <rect
+          x={paddingLeft + plotWidth * 0.15}
+          y={paddingTop + plotHeight - controlHeight}
+          width={plotWidth * 0.25}
+          height={controlHeight}
+          fill="url(#controlGrad)"
+          rx="4"
+          className="chart-bar"
+          style={{ transition: 'all 0.5s ease', cursor: 'pointer' }}
+          onMouseEnter={() => setHoveredPoint({ type: 'vs', mode: 'Control', value: vs_Control })}
+          onMouseLeave={() => setHoveredPoint(null)}
+        />
+        <text x={paddingLeft + plotWidth * 0.275} y={paddingTop + plotHeight + 16} fill="hsl(var(--text-secondary))" fontSize="10" textAnchor="middle" fontWeight="600">
+          Control
+        </text>
+
+        <rect
+          x={paddingLeft + plotWidth * 0.6}
+          y={paddingTop + plotHeight - expHeight}
+          width={plotWidth * 0.25}
+          height={expHeight}
+          fill="url(#expGrad)"
+          rx="4"
+          className="chart-bar"
+          style={{ transition: 'all 0.5s ease', cursor: 'pointer' }}
+          onMouseEnter={() => setHoveredPoint({ type: 'vs', mode: 'Sustain-Agile', value: vs_Exp })}
+          onMouseLeave={() => setHoveredPoint(null)}
+        />
+        <text x={paddingLeft + plotWidth * 0.725} y={paddingTop + plotHeight + 16} fill="hsl(var(--text-secondary))" fontSize="10" textAnchor="middle" fontWeight="600">
+          Sustain-Agile
+        </text>
+
+        <defs>
+          <linearGradient id="controlGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="hsl(var(--color-control))" stopOpacity="1" />
+            <stop offset="100%" stopColor="hsl(var(--color-control))" stopOpacity="0.4" />
+          </linearGradient>
+          <linearGradient id="expGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="hsl(var(--color-experimental))" stopOpacity="1" />
+            <stop offset="100%" stopColor="hsl(var(--color-experimental))" stopOpacity="0.4" />
+          </linearGradient>
+        </defs>
+      </svg>
+    );
+  };
+
+  const renderCostChart = () => {
+    const width = 360;
+    const height = 200;
+    const paddingLeft = 50;
+    const paddingRight = 20;
+    const paddingTop = 20;
+    const paddingBottom = 30;
+    const plotWidth = width - paddingLeft - paddingRight;
+    const plotHeight = height - paddingTop - paddingBottom;
+
+    const maxVal = Math.max(
+      controlCosts[controlCosts.length - 1] || 0,
+      expCosts[expCosts.length - 1] || 0,
+      0.01
+    ) * 1.15;
+
+    const maxIndex = Math.max(controlCosts.length, expCosts.length, 5);
+
+    const getPointsPath = (costs) => {
+      if (costs.length === 0) return '';
+      return costs.map((cost, idx) => {
+        const x = paddingLeft + (idx / (maxIndex - 1)) * plotWidth;
+        const y = paddingTop + plotHeight - (cost / maxVal) * plotHeight;
+        return `${idx === 0 ? 'M' : 'L'} ${x} ${y}`;
+      }).join(' ');
+    };
+
+    const controlPath = getPointsPath(controlCosts);
+    const expPath = getPointsPath(expCosts);
+
+    return (
+      <svg width="100%" height="100%" viewBox={`0 0 ${width} ${height}`} className="svg-chart">
+        {[0, 0.25, 0.5, 0.75, 1].map((r, idx) => {
+          const y = paddingTop + plotHeight - (r * plotHeight);
+          const val = `$${(r * maxVal).toFixed(4)}`;
+          return (
+            <g key={idx}>
+              <line x1={paddingLeft} y1={y} x2={width - paddingRight} y2={y} stroke="rgba(255,255,255,0.07)" strokeDasharray="3,3" />
+              <text x={paddingLeft - 10} y={y + 4} fill="hsl(var(--text-muted))" fontSize="9" textAnchor="end" fontFamily="monospace">
+                {val}
+              </text>
+            </g>
+          );
+        })}
+        <line x1={paddingLeft} y1={paddingTop + plotHeight} x2={width - paddingRight} y2={paddingTop + plotHeight} stroke="rgba(255,255,255,0.2)" />
+        <line x1={paddingLeft} y1={paddingTop} x2={paddingLeft} y2={paddingTop + plotHeight} stroke="rgba(255,255,255,0.2)" />
+
+        {controlPath && (
+          <path d={controlPath} fill="none" stroke="hsl(var(--color-control))" strokeWidth="2.5" style={{ transition: 'all 0.5s ease' }} />
+        )}
+        {controlCosts.map((cost, idx) => {
+          const x = paddingLeft + (idx / (maxIndex - 1)) * plotWidth;
+          const y = paddingTop + plotHeight - (cost / maxVal) * plotHeight;
+          return (
+            <circle
+              key={`c-${idx}`}
+              cx={x}
+              cy={y}
+              r="4"
+              fill="hsl(var(--color-control))"
+              stroke="#000"
+              strokeWidth="1.5"
+              style={{ cursor: 'pointer' }}
+              onMouseEnter={() => setHoveredPoint({ type: 'cost', mode: 'Control', index: idx + 1, value: cost })}
+              onMouseLeave={() => setHoveredPoint(null)}
+            />
+          );
+        })}
+
+        {expPath && (
+          <path d={expPath} fill="none" stroke="hsl(var(--color-experimental))" strokeWidth="2.5" style={{ transition: 'all 0.5s ease' }} />
+        )}
+        {expCosts.map((cost, idx) => {
+          const x = paddingLeft + (idx / (maxIndex - 1)) * plotWidth;
+          const y = paddingTop + plotHeight - (cost / maxVal) * plotHeight;
+          return (
+            <circle
+              key={`e-${idx}`}
+              cx={x}
+              cy={y}
+              r="4"
+              fill="hsl(var(--color-experimental))"
+              stroke="#000"
+              strokeWidth="1.5"
+              style={{ cursor: 'pointer' }}
+              onMouseEnter={() => setHoveredPoint({ type: 'cost', mode: 'Sustain-Agile', index: idx + 1, value: cost })}
+              onMouseLeave={() => setHoveredPoint(null)}
+            />
+          );
+        })}
+        <text x={paddingLeft + plotWidth / 2} y={paddingTop + plotHeight + 18} fill="hsl(var(--text-muted))" fontSize="9" textAnchor="middle">
+          Transactions Chronological Sequence
+        </text>
+      </svg>
+    );
+  };
+
+  const renderCarbonChart = () => {
+    const width = 360;
+    const height = 200;
+    const paddingLeft = 50;
+    const paddingRight = 20;
+    const paddingTop = 20;
+    const paddingBottom = 30;
+    const plotWidth = width - paddingLeft - paddingRight;
+    const plotHeight = height - paddingTop - paddingBottom;
+
+    const maxVal = Math.max(controlCarbonTotal, expCarbonTotal, 5) * 1.15;
+    const controlHeight = (controlCarbonTotal / maxVal) * plotHeight;
+    const expHeight = (expCarbonTotal / maxVal) * plotHeight;
+
+    return (
+      <svg width="100%" height="100%" viewBox={`0 0 ${width} ${height}`} className="svg-chart">
+        {[0, 0.25, 0.5, 0.75, 1].map((r, idx) => {
+          const y = paddingTop + plotHeight - (r * plotHeight);
+          const val = `${(r * maxVal).toFixed(0)}g`;
+          return (
+            <g key={idx}>
+              <line x1={paddingLeft} y1={y} x2={width - paddingRight} y2={y} stroke="rgba(255,255,255,0.07)" strokeDasharray="3,3" />
+              <text x={paddingLeft - 10} y={y + 4} fill="hsl(var(--text-muted))" fontSize="10" textAnchor="end" fontFamily="monospace">
+                {val}
+              </text>
+            </g>
+          );
+        })}
+        <line x1={paddingLeft} y1={paddingTop + plotHeight} x2={width - paddingRight} y2={paddingTop + plotHeight} stroke="rgba(255,255,255,0.2)" />
+        <line x1={paddingLeft} y1={paddingTop} x2={paddingLeft} y2={paddingTop + plotHeight} stroke="rgba(255,255,255,0.2)" />
+
+        <rect
+          x={paddingLeft + plotWidth * 0.15}
+          y={paddingTop + plotHeight - controlHeight}
+          width={plotWidth * 0.25}
+          height={controlHeight}
+          fill="url(#controlGrad)"
+          rx="4"
+          className="chart-bar"
+          style={{ transition: 'all 0.5s ease', cursor: 'pointer' }}
+          onMouseEnter={() => setHoveredPoint({ type: 'carbon', mode: 'Control', value: controlCarbonTotal })}
+          onMouseLeave={() => setHoveredPoint(null)}
+        />
+        <text x={paddingLeft + plotWidth * 0.275} y={paddingTop + plotHeight + 16} fill="hsl(var(--text-secondary))" fontSize="10" textAnchor="middle" fontWeight="600">
+          Control
+        </text>
+
+        <rect
+          x={paddingLeft + plotWidth * 0.6}
+          y={paddingTop + plotHeight - expHeight}
+          width={plotWidth * 0.25}
+          height={expHeight}
+          fill="url(#expGrad)"
+          rx="4"
+          className="chart-bar"
+          style={{ transition: 'all 0.5s ease', cursor: 'pointer' }}
+          onMouseEnter={() => setHoveredPoint({ type: 'carbon', mode: 'Sustain-Agile', value: expCarbonTotal })}
+          onMouseLeave={() => setHoveredPoint(null)}
+        />
+        <text x={paddingLeft + plotWidth * 0.725} y={paddingTop + plotHeight + 16} fill="hsl(var(--text-secondary))" fontSize="10" textAnchor="middle" fontWeight="600">
+          Sustain-Agile
+        </text>
+      </svg>
+    );
+  };
+
+  const renderTokenChart = () => {
+    const width = 360;
+    const height = 200;
+    const paddingLeft = 50;
+    const paddingRight = 20;
+    const paddingTop = 20;
+    const paddingBottom = 30;
+    const plotWidth = width - paddingLeft - paddingRight;
+    const plotHeight = height - paddingTop - paddingBottom;
+
+    const controlTotal = controlPromptTokens + controlCandidateTokens;
+    const expTotal = expPromptTokens + expCandidateTokens;
+
+    const maxVal = Math.max(controlTotal, expTotal, 500) * 1.15;
+
+    const controlPromptHeight = (controlPromptTokens / maxVal) * plotHeight;
+    const controlCandHeight = (controlCandidateTokens / maxVal) * plotHeight;
+
+    const expPromptHeight = (expPromptTokens / maxVal) * plotHeight;
+    const expCandHeight = (expCandidateTokens / maxVal) * plotHeight;
+
+    return (
+      <svg width="100%" height="100%" viewBox={`0 0 ${width} ${height}`} className="svg-chart">
+        {[0, 0.25, 0.5, 0.75, 1].map((r, idx) => {
+          const y = paddingTop + plotHeight - (r * plotHeight);
+          const val = (r * maxVal).toFixed(0);
+          return (
+            <g key={idx}>
+              <line x1={paddingLeft} y1={y} x2={width - paddingRight} y2={y} stroke="rgba(255,255,255,0.07)" strokeDasharray="3,3" />
+              <text x={paddingLeft - 10} y={y + 4} fill="hsl(var(--text-muted))" fontSize="9" textAnchor="end" fontFamily="monospace">
+                {val}
+              </text>
+            </g>
+          );
+        })}
+        <line x1={paddingLeft} y1={paddingTop + plotHeight} x2={width - paddingRight} y2={paddingTop + plotHeight} stroke="rgba(255,255,255,0.2)" />
+        <line x1={paddingLeft} y1={paddingTop} x2={paddingLeft} y2={paddingTop + plotHeight} stroke="rgba(255,255,255,0.2)" />
+
+        <rect
+          x={paddingLeft + plotWidth * 0.15}
+          y={paddingTop + plotHeight - controlPromptHeight}
+          width={plotWidth * 0.25}
+          height={controlPromptHeight}
+          fill="url(#controlGrad)"
+          rx="2"
+          className="chart-bar"
+          style={{ transition: 'all 0.5s ease', cursor: 'pointer' }}
+          onMouseEnter={() => setHoveredPoint({ type: 'tokens', mode: 'Control', prompt: controlPromptTokens, candidates: controlCandidateTokens })}
+          onMouseLeave={() => setHoveredPoint(null)}
+        />
+        {controlCandHeight > 0 && (
+          <rect
+            x={paddingLeft + plotWidth * 0.15}
+            y={paddingTop + plotHeight - controlPromptHeight - controlCandHeight}
+            width={plotWidth * 0.25}
+            height={controlCandHeight}
+            fill="hsl(var(--color-gold))"
+            rx="2"
+            className="chart-bar"
+            style={{ transition: 'all 0.5s ease', cursor: 'pointer' }}
+            onMouseEnter={() => setHoveredPoint({ type: 'tokens', mode: 'Control', prompt: controlPromptTokens, candidates: controlCandidateTokens })}
+            onMouseLeave={() => setHoveredPoint(null)}
+          />
+        )}
+        <text x={paddingLeft + plotWidth * 0.275} y={paddingTop + plotHeight + 16} fill="hsl(var(--text-secondary))" fontSize="10" textAnchor="middle" fontWeight="600">
+          Control
+        </text>
+
+        <rect
+          x={paddingLeft + plotWidth * 0.6}
+          y={paddingTop + plotHeight - expPromptHeight}
+          width={plotWidth * 0.25}
+          height={expPromptHeight}
+          fill="url(#expGrad)"
+          rx="2"
+          className="chart-bar"
+          style={{ transition: 'all 0.5s ease', cursor: 'pointer' }}
+          onMouseEnter={() => setHoveredPoint({ type: 'tokens', mode: 'Sustain-Agile', prompt: expPromptTokens, candidates: expCandidateTokens })}
+          onMouseLeave={() => setHoveredPoint(null)}
+        />
+        {expCandHeight > 0 && (
+          <rect
+            x={paddingLeft + plotWidth * 0.6}
+            y={paddingTop + plotHeight - expPromptHeight - expCandHeight}
+            width={plotWidth * 0.25}
+            height={expCandHeight}
+            fill="hsl(var(--color-gold))"
+            rx="2"
+            className="chart-bar"
+            style={{ transition: 'all 0.5s ease', cursor: 'pointer' }}
+            onMouseEnter={() => setHoveredPoint({ type: 'tokens', mode: 'Sustain-Agile', prompt: expPromptTokens, candidates: expCandidateTokens })}
+            onMouseLeave={() => setHoveredPoint(null)}
+          />
+        )}
+        <text x={paddingLeft + plotWidth * 0.725} y={paddingTop + plotHeight + 16} fill="hsl(var(--text-secondary))" fontSize="10" textAnchor="middle" fontWeight="600">
+          Sustain-Agile
+        </text>
+      </svg>
+    );
+  };
 
   return (
     <div className="app-container">
@@ -421,121 +852,225 @@ export default function App() {
             <span className="metric-change-positive">-{carbonReductionPercent}% CO₂e</span>
           </div>
         </div>
+
+        {/* Metric 6: Sustainability Velocity */}
+        <div className="metric-card velocity">
+          <div className="metric-header">
+            <span>Sustainability Velocity</span>
+            <span className="metric-icon">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="hsl(var(--color-experimental))" strokeWidth="2.5">
+                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+              </svg>
+            </span>
+          </div>
+          <div className="metric-value" style={{ color: 'hsl(var(--color-experimental))' }}>
+            {mode === 'Control' ? vs_Control.toFixed(2) : vs_Exp.toFixed(2)}
+          </div>
+          <div className="metric-subtext">
+            <span>Current Vs Score</span>
+            <span className={vs_Exp > vs_Control ? "metric-change-positive" : ""}>
+              {vs_Control > 0 && vs_Exp > 0 
+                ? `x${(vs_Exp / vs_Control).toFixed(1)} vs Control` 
+                : 'Vs = Σ(SP×μ) / [CAWS+(T×ω)]'}
+            </span>
+          </div>
+        </div>
       </section>
 
       {/* 5. Main Split layout: Left (Form Panel) | Right (Interactive Telemetry Dashboard) */}
       <main className="main-layout">
-        {/* Left Side: Analyzer Controller */}
+        {/* Left Side: Analyzer & Simulation Control */}
         <section className={`form-panel mode-${mode.toLowerCase()}`}>
-          <h2 className="form-section-title">Meal Analyzer</h2>
+          <div className="panel-tabs">
+            <button 
+              type="button" 
+              className={`panel-tab-btn ${activeTab === 'single' ? 'active' : ''}`}
+              onClick={() => setActiveTab('single')}
+            >
+              Single Request
+            </button>
+            <button 
+              type="button" 
+              className={`panel-tab-btn ${activeTab === 'simulation' ? 'active' : ''}`}
+              onClick={() => setActiveTab('simulation')}
+            >
+              Sprint Simulation
+            </button>
+          </div>
           
-          <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-            
-            {/* Input tag */}
-            <div className="input-group">
-              <label className="input-label" htmlFor="meal-tag-input">Meal Tag (Text Name)</label>
-              <input 
-                id="meal-tag-input"
-                type="text" 
-                className="text-input" 
-                placeholder="e.g. Avocado Salad, Pepperoni Pizza, Apple" 
-                value={mealTag}
-                onChange={(e) => setMealTag(e.target.value)}
-                disabled={isLoading}
-              />
-            </div>
-
-            {/* File uploader */}
-            <div className="input-group">
-              <label className="input-label">Meal Image (Drag & Drop or Click)</label>
-              <div 
-                className="uploader-area" 
-                onClick={triggerFileInput}
-                onDragOver={handleDragOver}
-                onDrop={handleDrop}
-              >
+          {activeTab === 'single' ? (
+            <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+              
+              {/* Input tag */}
+              <div className="input-group">
+                <label className="input-label" htmlFor="meal-tag-input">Meal Tag (Text Name)</label>
                 <input 
-                  type="file" 
-                  ref={fileInputRef}
-                  style={{ display: 'none' }} 
-                  accept="image/*"
-                  onChange={handleFileChange}
+                  id="meal-tag-input"
+                  type="text" 
+                  className="text-input" 
+                  placeholder="e.g. Avocado Salad, Pepperoni Pizza, Apple" 
+                  value={mealTag}
+                  onChange={(e) => setMealTag(e.target.value)}
                   disabled={isLoading}
                 />
-                
-                {previewUrl ? (
+              </div>
+
+              {/* File uploader */}
+              <div className="input-group">
+                <label className="input-label">Meal Image (Drag & Drop or Click)</label>
+                <div 
+                  className="uploader-area" 
+                  onClick={triggerFileInput}
+                  onDragOver={handleDragOver}
+                  onDrop={handleDrop}
+                >
+                  <input 
+                    type="file" 
+                    ref={fileInputRef}
+                    style={{ display: 'none' }} 
+                    accept="image/*"
+                    onChange={handleFileChange}
+                    disabled={isLoading}
+                  />
+                  
+                  {previewUrl ? (
+                    <>
+                      <img src={previewUrl} className="uploader-preview" alt="Meal Preview" />
+                      <button type="button" className="remove-img-btn" onClick={removeImage} title="Remove image">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                          <line x1="18" y1="6" x2="6" y2="18" />
+                          <line x1="6" y1="6" x2="18" y2="18" />
+                        </svg>
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <div className="upload-icon">
+                        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12" />
+                        </svg>
+                      </div>
+                      <p className="upload-text">Upload meal image</p>
+                      <p className="upload-subtext">JPEG, PNG, WEBP up to 10MB</p>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* Explain the selected framework strategy */}
+              <div className="mode-descriptor">
+                <strong>
+                  {mode === 'Control' ? 'Control Mode (Standard Agile):' : 'Sustain-Agile Mode (Green Cloud):'}
+                </strong>
+                <ul className="descriptor-list">
+                  {mode === 'Control' ? (
+                    <>
+                      <li>Direct execution: Bypasses caches completely.</li>
+                      <li>Uncompressed storage: Uploads raw buffers.</li>
+                      <li>Heavy descriptive prompt design for nutrition.</li>
+                      <li>Hosts in high-carbon grid us-east-1 (475 g/kWh).</li>
+                    </>
+                  ) : (
+                    <>
+                      <li>Fast Semantic Cache checking (Image hash & tags).</li>
+                      <li>Media compression: Uses Sharp for WebP convert.</li>
+                      <li>Compressed prompts to save egress and API tokens.</li>
+                      <li>Hosts in low-carbon renewable grid eu-west-1 (50 g/kWh).</li>
+                    </>
+                  )}
+                </ul>
+              </div>
+
+              {/* Action Submit */}
+              <button 
+                type="submit" 
+                className="submit-btn"
+                disabled={isLoading}
+              >
+                {isLoading ? (
                   <>
-                    <img src={previewUrl} className="uploader-preview" alt="Meal Preview" />
-                    <button type="button" className="remove-img-btn" onClick={removeImage} title="Remove image">
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                        <line x1="18" y1="6" x2="6" y2="18" />
-                        <line x1="6" y1="6" x2="18" y2="18" />
-                      </svg>
-                    </button>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" className="spinner" style={{ animation: 'spin 1s linear infinite' }}>
+                      <circle cx="12" cy="12" r="10" strokeDasharray="32" strokeDashoffset="12" />
+                    </svg>
+                    Processing...
                   </>
                 ) : (
                   <>
-                    <div className="upload-icon">
-                      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12" />
-                      </svg>
-                    </div>
-                    <p className="upload-text">Upload meal image</p>
-                    <p className="upload-subtext">JPEG, PNG, WEBP up to 10MB</p>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <path d="m22 2-7 20-4-9-9-4Z" />
+                      <path d="M22 2 11 13" />
+                    </svg>
+                    Analyze Nutrition
                   </>
                 )}
+              </button>
+            </form>
+          ) : (
+            <div className="simulation-panel">
+              <h3 className="sim-title" style={{ fontSize: '1rem', fontWeight: 700, marginBottom: '0.5rem', color: '#fff' }}>
+                Sprint Backlog Simulation Suite
+              </h3>
+              <p className="sim-desc" style={{ fontSize: '0.8rem', color: 'hsl(var(--text-secondary))', lineHeight: 1.4, marginBottom: '1.25rem' }}>
+                Test the proposed Sustain-Agile framework vs. the standard Scrum workflow at scale. Running a simulation executes a batch backlog of 10 tasks (including 4 duplicate queries to test semantic caching).
+              </p>
+              
+              <div className="sim-actions" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                <button 
+                  type="button" 
+                  className="sim-btn control" 
+                  onClick={() => handleSimulateSprint('Control')}
+                  disabled={isLoading}
+                  style={{
+                    background: 'hsl(var(--color-control))',
+                    color: '#000',
+                    border: 'none',
+                    padding: '0.875rem',
+                    borderRadius: '0.5rem',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    transition: 'all 0.25s ease'
+                  }}
+                >
+                  {isSimulating ? 'Simulating...' : 'Run Control Scrum Sprint'}
+                </button>
+                
+                <button 
+                  type="button" 
+                  className="sim-btn experimental" 
+                  onClick={() => handleSimulateSprint('Experimental')}
+                  disabled={isLoading}
+                  style={{
+                    background: 'hsl(var(--color-experimental))',
+                    color: '#000',
+                    border: 'none',
+                    padding: '0.875rem',
+                    borderRadius: '0.5rem',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    transition: 'all 0.25s ease'
+                  }}
+                >
+                  {isSimulating ? 'Simulating...' : 'Run Sustain-Agile Sprint'}
+                </button>
+              </div>
+              
+              <div className="sim-details" style={{ marginTop: '1.25rem', padding: '0.875rem', background: 'rgba(255,255,255,0.02)', borderRadius: '0.5rem', border: '1px solid hsl(var(--border-subtle))', fontSize: '0.75rem', lineHeight: 1.4 }}>
+                <strong style={{ color: 'hsl(var(--text-secondary))', display: 'block', marginBottom: '0.25rem' }}>Backlog Preset:</strong>
+                <ol style={{ paddingLeft: '1.15rem', color: 'hsl(var(--text-muted))', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                  <li>Apple (1200KB)</li>
+                  <li>Salad (2400KB)</li>
+                  <li>Pizza (3100KB)</li>
+                  <li>Salad (Duplicate → Cache Hit)</li>
+                  <li>Burger (3500KB)</li>
+                  <li>Apple (Duplicate → Cache Hit)</li>
+                  <li>Chicken (1800KB)</li>
+                  <li>Burger (Duplicate → Cache Hit)</li>
+                  <li>Eggs (1500KB)</li>
+                  <li>Chicken (Duplicate → Cache Hit)</li>
+                </ol>
               </div>
             </div>
-
-            {/* Explain the selected framework strategy */}
-            <div className="mode-descriptor">
-              <strong>
-                {mode === 'Control' ? 'Control Mode (Standard Agile):' : 'Sustain-Agile Mode (Green Cloud):'}
-              </strong>
-              <ul className="descriptor-list">
-                {mode === 'Control' ? (
-                  <>
-                    <li>Direct execution: Bypasses caches completely.</li>
-                    <li>Uncompressed storage: Uploads raw buffers.</li>
-                    <li>Heavy descriptive prompt design for nutrition.</li>
-                    <li>Hosts in high-carbon grid us-east-1 (475 g/kWh).</li>
-                  </>
-                ) : (
-                  <>
-                    <li>Fast Semantic Cache checking (Image hash & tags).</li>
-                    <li>Media compression: Uses Sharp for WebP convert.</li>
-                    <li>Compressed prompts to save egress and API tokens.</li>
-                    <li>Hosts in low-carbon renewable grid eu-west-1 (50 g/kWh).</li>
-                  </>
-                )}
-              </ul>
-            </div>
-
-            {/* Action Submit */}
-            <button 
-              type="submit" 
-              className="submit-btn"
-              disabled={isLoading}
-            >
-              {isLoading ? (
-                <>
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" className="spinner" style={{ animation: 'spin 1s linear infinite' }}>
-                    <circle cx="12" cy="12" r="10" strokeDasharray="32" strokeDashoffset="12" />
-                  </svg>
-                  Processing...
-                </>
-              ) : (
-                <>
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                    <path d="m22 2-7 20-4-9-9-4Z" />
-                    <path d="M22 2 11 13" />
-                  </svg>
-                  Analyze Nutrition
-                </>
-              )}
-            </button>
-
-          </form>
+          )}
         </section>
 
         {/* Right Side: Active Result Display & Telemetry feed */}
@@ -759,6 +1294,88 @@ export default function App() {
 
         </section>
       </main>
+
+      {/* 6. Sustain-Agile Performance Analytics Dashboard */}
+      {logs.length > 0 && (
+        <section className="analytics-section">
+          <div className="analytics-header">
+            <h2 className="analytics-title">Sustain-Agile Research Performance Analytics</h2>
+            <p className="analytics-subtitle">Experimental Validation and Multi-dimensional Velocity Assessment</p>
+          </div>
+
+          <div className="vs-formula-card">
+            <div className="vs-formula-body">
+              <div className="vs-formula-math">
+                <span className="math-vs">V<sub>s</sub></span>
+                <span className="math-equals">=</span>
+                <div className="math-fraction">
+                  <span className="math-numerator">Σ (SP<sub>i</sub> × μ<sub>i</sub>)</span>
+                  <span className="math-denominator">CAWS + (T<sub>tokens</sub> × ω)</span>
+                </div>
+              </div>
+              <div className="vs-formula-legend">
+                <h4 style={{ color: '#fff', fontSize: '0.85rem', marginBottom: '0.35rem', fontWeight: 700 }}>Sustainability Velocity (V<sub>s</sub>) Legend:</h4>
+                <p><strong>SP<sub>i</sub></strong> = User Story Points (Assigned 5 per transaction)</p>
+                <p><strong>μ<sub>i</sub></strong> = Productivity Efficiency (1.0 default, 1.5 for instant Cache Hits)</p>
+                <p><strong>CAWS</strong> = AWS Cumulative Costs ($ Egress + LLM Inference)</p>
+                <p><strong>T<sub>tokens</sub></strong> = Cumulative Tokens consumed (scaled per 1K tokens)</p>
+                <p><strong>ω</strong> = Regional carbon factor (Control: 475 g/kWh, Sustain-Agile: 50 g/kWh)</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="charts-grid">
+            <div className="chart-card">
+              <h3 className="chart-card-title">Sustainability Velocity (V<sub>s</sub>)</h3>
+              <div className="chart-container">{renderVelocityChart()}</div>
+            </div>
+            
+            <div className="chart-card">
+              <h3 className="chart-card-title">AWS Egress & Inference Cost ($)</h3>
+              <div className="chart-container">{renderCostChart()}</div>
+            </div>
+
+            <div className="chart-card">
+              <h3 className="chart-card-title">Carbon Footprint Emissions (g CO₂e)</h3>
+              <div className="chart-container">{renderCarbonChart()}</div>
+            </div>
+
+            <div className="chart-card">
+              <h3 className="chart-card-title">Computational LLM Token Load</h3>
+              <div className="chart-container">{renderTokenChart()}</div>
+            </div>
+          </div>
+
+          {/* Metric Inspector Console */}
+          <div className="inspector-panel">
+            <div className="inspector-glow-accent" style={{ background: hoveredPoint ? (hoveredPoint.mode === 'Control' ? 'rgba(244, 63, 94, 0.15)' : 'rgba(34, 197, 94, 0.15)') : 'rgba(255,255,255,0.02)' }} />
+            <div className="inspector-content">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ color: hoveredPoint ? (hoveredPoint.mode === 'Control' ? 'hsl(var(--color-control))' : 'hsl(var(--color-experimental))') : 'hsl(var(--text-muted))' }}>
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" y1="16" x2="12" y2="12" />
+                <line x1="12" y1="8" x2="12.01" y2="8" />
+              </svg>
+              {hoveredPoint ? (
+                <div className="inspector-data">
+                  <strong style={{ textTransform: 'uppercase', color: hoveredPoint.mode === 'Control' ? 'hsl(var(--color-control))' : 'hsl(var(--color-experimental))' }}>
+                    {hoveredPoint.mode} Mode
+                  </strong>
+                  <span style={{ color: '#fff', fontWeight: 600, marginLeft: '0.5rem' }}>
+                    {hoveredPoint.type === 'vs' && `Calculated Velocity Score: ${hoveredPoint.value.toFixed(2)}`}
+                    {hoveredPoint.type === 'cost' && `Cumulative Operational Cost: $${hoveredPoint.value.toFixed(5)} (at transaction index #${hoveredPoint.index})`}
+                    {hoveredPoint.type === 'carbon' && `Total Grid Carbon Emissions: ${hoveredPoint.value.toFixed(1)} g CO₂e`}
+                    {hoveredPoint.type === 'tokens' && `Total sprint tokens: ${(hoveredPoint.prompt + hoveredPoint.candidates).toLocaleString()} (Prompt: ${hoveredPoint.prompt.toLocaleString()} | Completion: ${hoveredPoint.candidates.toLocaleString()})`}
+                  </span>
+                </div>
+              ) : (
+                <span style={{ color: 'hsl(var(--text-muted))', fontSize: '0.85rem' }}>
+                  Hover over bars or nodes in the charts above to run deep telemetry metric inspection.
+                </span>
+              )}
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* Dynamic Keyframes for spinner in CSS styles */}
       <style>{`

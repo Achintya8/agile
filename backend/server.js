@@ -4,7 +4,7 @@ import multer from 'multer';
 import dotenv from 'dotenv';
 import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
-import { analyzeMeal, getTelemetry, resetLogs } from './controllers/calorieController.js';
+import { analyzeMeal, getTelemetry, resetLogs, simulateSprint } from './controllers/calorieController.js';
 import { budgetGate } from './middleware/budgetGate.js';
 
 dotenv.config();
@@ -24,12 +24,13 @@ const upload = multer({
 
 // Connect to MongoDB Database
 const connectDatabase = async () => {
+  let mongoServer = null;
   try {
     let mongoUri = process.env.MONGODB_URI;
 
     if (!mongoUri) {
       console.log('No MONGODB_URI found in environment. Starting MongoMemoryServer...');
-      const mongoServer = await MongoMemoryServer.create();
+      mongoServer = await MongoMemoryServer.create();
       mongoUri = mongoServer.getUri();
       console.log(`MongoMemoryServer started dynamically at: ${mongoUri}`);
     }
@@ -37,8 +38,21 @@ const connectDatabase = async () => {
     await mongoose.connect(mongoUri);
     console.log('Successfully connected to MongoDB!');
   } catch (error) {
-    console.error('Failed to connect to MongoDB database:', error);
-    process.exit(1);
+    console.error('Failed to connect to primary MongoDB database:', error.message);
+    if (process.env.MONGODB_URI) {
+      console.log('Attempting automatic fallback to local MongoMemoryServer...');
+      try {
+        mongoServer = await MongoMemoryServer.create();
+        const fallbackUri = mongoServer.getUri();
+        await mongoose.connect(fallbackUri);
+        console.log(`MongoMemoryServer started and connected dynamically at: ${fallbackUri}`);
+      } catch (fallbackError) {
+        console.error('Fallback MongoMemoryServer also failed:', fallbackError);
+        process.exit(1);
+      }
+    } else {
+      process.exit(1);
+    }
   }
 };
 
@@ -46,6 +60,7 @@ const connectDatabase = async () => {
 app.post('/api/analyze-meal', upload.single('image'), budgetGate, analyzeMeal);
 app.get('/api/telemetry', getTelemetry);
 app.post('/api/reset', resetLogs);
+app.post('/api/simulate-sprint', simulateSprint);
 
 // Backend Health Check
 app.get('/api/health', (req, res) => {

@@ -953,3 +953,251 @@
 .compare-row-bar-inner.experimental {
   background: hsl(var(--color-experimental));
 }
+
+/* Panel Tabs */
+.panel-tabs {
+  display: flex;
+  background: hsl(var(--bg-surface));
+  border: 1px solid hsl(var(--border-subtle));
+  border-radius: 0.5rem;
+  padding: 0.25rem;
+  gap: 0.25rem;
+  margin-bottom: 1rem;
+}
+
+.panel-tab-btn {
+  flex: 1;
+  background: none;
+  border: none;
+  padding: 0.5rem;
+  border-radius: 0.375rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: hsl(var(--text-secondary));
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.panel-tab-btn:hover {
+  color: hsl(var(--text-primary));
+}
+
+.panel-tab-btn.active {
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+}
+
+/* Simulation panel styles */
+.simulation-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.sim-btn {
+  width: 100%;
+  padding: 0.875rem;
+  font-size: 0.95rem;
+  border-radius: 0.5rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.sim-btn.control:hover {
+  filter: brightness(1.15);
+  box-shadow: 0 4px 15px rgba(var(--color-control-rgb), 0.3);
+}
+
+.sim-btn.experimental:hover {
+  filter: brightness(1.15);
+  box-shadow: 0 4px 15px rgba(var(--color-experimental-rgb), 0.3);
+}
+
+/* Research Performance Analytics bottom section styling */
+.analytics-section {
+  background: hsl(var(--bg-card));
+  border: 1px solid hsl(var(--border-subtle));
+  border-radius: 1rem;
+  padding: 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  box-shadow: var(--shadow-md);
+  margin-top: 1rem;
+  position: relative;
+  overflow: hidden;
+}
+
+.analytics-header {
+  border-bottom: 1px solid hsl(var(--border-subtle));
+  padding-bottom: 1rem;
+}
+
+.analytics-title {
+  font-size: 1.5rem;
+  font-weight: 800;
+  background: linear-gradient(135deg, #fff 0%, hsl(var(--text-secondary)) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.analytics-subtitle {
+  font-size: 0.875rem;
+  color: hsl(var(--text-muted));
+  margin-top: 0.25rem;
+}
+
+/* Sustainability Velocity Formula Card */
+.vs-formula-card {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid hsl(var(--border-subtle));
+  border-radius: 0.75rem;
+  padding: 1.25rem;
+}
+
+.vs-formula-body {
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+}
+
+.vs-formula-math {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.2);
+  padding: 1rem 1.5rem;
+  border-radius: 0.5rem;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.math-vs {
+  color: hsl(var(--color-experimental));
+}
+
+.math-fraction {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  font-size: 1.15rem;
+  vertical-align: middle;
+}
+
+.math-numerator {
+  border-bottom: 2px solid rgba(255, 255, 255, 0.4);
+  padding-bottom: 2px;
+  width: 100%;
+  text-align: center;
+}
+
+.math-denominator {
+  padding-top: 2px;
+  width: 100%;
+  text-align: center;
+}
+
+.vs-formula-legend {
+  font-size: 0.75rem;
+  color: hsl(var(--text-secondary));
+  line-height: 1.6;
+  max-width: 450px;
+}
+
+.vs-formula-legend p {
+  margin-bottom: 0.15rem;
+}
+
+/* Charts Grid layout */
+.charts-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1.5rem;
+}
+
+.chart-card {
+  background: hsl(var(--bg-surface));
+  border: 1px solid hsl(var(--border-subtle));
+  border-radius: 0.75rem;
+  padding: 1.25rem;
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.chart-card-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: hsl(var(--text-secondary));
+  border-left: 3px solid hsl(var(--color-experimental));
+  padding-left: 0.5rem;
+}
+
+.chart-card:nth-child(even) .chart-card-title {
+  border-left-color: hsl(var(--color-control));
+}
+
+.chart-container {
+  height: 200px;
+  position: relative;
+}
+
+.svg-chart {
+  width: 100%;
+  height: 100%;
+}
+
+.chart-bar {
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.chart-bar:hover {
+  filter: brightness(1.2);
+}
+
+/* Inspector panel styles */
+.inspector-panel {
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid hsl(var(--border-subtle));
+  border-radius: 0.75rem;
+  padding: 1rem 1.5rem;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+}
+
+.inspector-glow-accent {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 6px;
+  transition: all 0.3s ease;
+}
+
+.inspector-content {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  z-index: 1;
+  width: 100%;
+}
+
+.inspector-data {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+}
+
+.inspector-data span {
+  font-size: 0.85rem;
+}
+

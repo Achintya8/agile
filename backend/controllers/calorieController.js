@@ -1,13 +1,124 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import sharp from 'sharp';
 import crypto from 'crypto';
+import * as tf from '@tensorflow/tfjs';
+import * as mobilenet from '@tensorflow-models/mobilenet';
 import SprintLog from '../models/SprintLog.js';
 import { BUDGET_LIMIT, getCumulativeCost } from '../middleware/budgetGate.js';
 
-// Setup Gemini API client
-const apiKey = process.env.GEMINI_API_KEY;
-const isApiKeyConfigured = apiKey && apiKey !== 'YOUR_GEMINI_API_KEY' && apiKey.trim().length > 0;
-const genAI = isApiKeyConfigured ? new GoogleGenerativeAI(apiKey) : null;
+// Setup Gemini API client lazily to handle dotenv initialization order
+const getGeminiClient = () => {
+  const apiKey = process.env.GEMINI_API_KEY;
+  const isApiKeyConfigured = apiKey && apiKey !== 'YOUR_GEMINI_API_KEY' && apiKey.trim().length > 0;
+  if (!isApiKeyConfigured) return null;
+  return new GoogleGenerativeAI(apiKey);
+};
+
+// Free OpenRouter models — Llama 3.3 70B as primary (less congested), Gemma 2 9B as vision secondary
+const FREE_TEXT_MODEL   = 'meta-llama/llama-3.3-70b-instruct:free'; // Primary: text-only, reliable free tier
+const FREE_VISION_MODEL = 'google/gemma-2-9b-it:free';              // Secondary: vision-capable free model
+
+const callOpenRouter = async (prompt, processedImageBuffer, mode, mimetype, model = FREE_TEXT_MODEL) => {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey || apiKey === 'YOUR_OPENROUTER_API_KEY' || apiKey.trim().length === 0) return null;
+
+  const hasImage = !!processedImageBuffer;
+
+  try {
+    const messages = [];
+    // Gemma models are vision-capable and can receive image payloads
+    const isVisionModel = model.includes('gemma') || model.includes('vision');
+
+    if (isVisionModel && hasImage) {
+      const base64Image = processedImageBuffer.toString('base64');
+      const mime = mode === 'Experimental' ? 'image/webp' : (mimetype || 'image/png');
+      messages.push({
+        role: 'user',
+        content: [
+          { type: 'text', text: prompt },
+          { type: 'image_url', image_url: { url: `data:${mime};base64,${base64Image}` } }
+        ]
+      });
+    } else {
+      messages.push({ role: 'user', content: prompt });
+    }
+
+    const payload = {
+      model,
+      messages
+    };
+
+    console.log(`[BACKEND] Sending request to OpenRouter (${model})...`);
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'http://localhost:5000',
+        'X-Title': 'Sustain-Agile Tracker'
+      },
+      body: JSON.stringify(payload)
+    });
+
+    if (response.status !== 200) {
+      const errorBody = await response.text();
+      console.warn(`[BACKEND] OpenRouter error ${response.status} with ${model}: ${errorBody}`);
+      return null;
+    }
+
+    const data = await response.json();
+    console.log(`[BACKEND] OpenRouter (${model}) responded successfully.`);
+    return {
+      text: data.choices?.[0]?.message?.content || '',
+      usage: {
+        promptTokens: data.usage?.prompt_tokens || 0,
+        candidatesTokens: data.usage?.completion_tokens || 0,
+        totalTokens: data.usage?.total_tokens || 0
+      }
+    };
+  } catch (err) {
+    console.error('[BACKEND] OpenRouter call failed:', err);
+    return null;
+  }
+};
+
+let localClassifier = null;
+const getClassifier = async () => {
+  if (!localClassifier) {
+    console.log('[BACKEND] Loading local MobileNet classifier...');
+    const start = Date.now();
+    localClassifier = await mobilenet.load({ version: 2, alpha: 1.0 });
+    console.log(`[BACKEND] Local MobileNet classifier loaded in ${((Date.now() - start) / 1000).toFixed(2)}s`);
+  }
+  return localClassifier;
+};
+
+const classifyImageBuffer = async (imageBuffer) => {
+  try {
+    const model = await getClassifier();
+    const { data } = await sharp(imageBuffer)
+      .resize(224, 224, { fit: 'fill' })
+      .removeAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+      
+    const tensor = tf.tensor3d(new Uint8Array(data), [224, 224, 3], 'int32');
+    const predictions = await model.classify(tensor);
+    tensor.dispose();
+    
+    if (predictions && predictions.length > 0) {
+      const rawClass = predictions[0].className;
+      const firstLabel = rawClass.split(',')[0].trim();
+      return firstLabel.charAt(0).toUpperCase() + firstLabel.slice(1);
+    }
+  } catch (err) {
+    console.error('[BACKEND] Local MobileNet classification failed:', err);
+  }
+  return null;
+};
+
+let liveRequestsMade = 0;
+const MAX_LIVE_REQUESTS = 20;
 
 // Regex helper to extract and parse JSON from Gemini's response
 const parseGeminiJson = (text) => {
@@ -66,7 +177,19 @@ const getMockMealData = (tag = '') => {
 export const analyzeMeal = async (req, res) => {
   try {
     const { mode, mealTag } = req.body;
-    const cleanMealTag = mealTag ? mealTag.trim() : '';
+    let cleanMealTag = mealTag ? mealTag.trim() : '';
+    console.log(`[BACKEND] Received /api/analyze-meal request. Mode: ${mode}, Tag: ${cleanMealTag}, HasFile: ${!!req.file}`);
+
+    if (req.file) {
+      console.log('[BACKEND] Image uploaded, running local TensorFlow/MobileNet classification...');
+      const detectedTag = await classifyImageBuffer(req.file.buffer);
+      if (detectedTag) {
+        console.log(`[BACKEND] Local MobileNet classified image as: ${detectedTag}`);
+        cleanMealTag = detectedTag;
+      } else {
+        console.log('[BACKEND] Local classification returned null, using request tag:', cleanMealTag);
+      }
+    }
 
     if (!req.file && !cleanMealTag) {
       return res.status(400).json({ error: 'Please upload a meal image or enter a meal name.' });
@@ -136,7 +259,7 @@ export const analyzeMeal = async (req, res) => {
           optimizedFileSizeKB,
           regionalCarbonFactor: 'low',
           calculatedVirtualCost: 0,
-          mealTag: cleanMealTag || cachedLog.mealTag,
+          mealTag: cachedLog.mealTag || cleanMealTag,
           imageHash: imageHash || cachedLog.imageHash,
           foodData: cachedLog.foodData,
           simulatedEgressFee,
@@ -191,74 +314,145 @@ export const analyzeMeal = async (req, res) => {
     let rawTextResponse = '';
 
     if (mode === 'Control') {
-      prompt = `You are an elite nutritionist. Carefully analyze this image of food. Identify every ingredient you see, estimate its weight in grams, and calculate the total calories, protein, carbs, and fats. Provide a detailed breakdown explanation.
+      prompt = `You are an elite nutritionist. Carefully analyze the food item "${cleanMealTag || 'shown in this image'}"${hasFile ? ' in this image' : ''}. Identify every ingredient, estimate its weight in grams, and calculate the total calories, protein, carbs, and fats. Provide a detailed breakdown explanation.
       
       At the very end of your response, output a JSON block matching this schema so the system can parse the metrics:
-      JSON_START { "item": "Name of primary food item", "calories": total_calories_number, "protein": total_protein_grams_number, "carbs": total_carbs_grams_number, "fat": total_fat_grams_number } JSON_END`;
+      JSON_START { "item": "${cleanMealTag || 'Name of primary food item'}", "calories": total_calories_number, "protein": total_protein_grams_number, "carbs": total_carbs_grams_number, "fat": total_fat_grams_number } JSON_END`;
     } else {
       // Experimental Mode - Compressed Prompt
-      prompt = `Return JSON only: {item: string, calories: number, protein: number, carbs: number, fat: number}`;
+      prompt = `Return JSON only for "${cleanMealTag || 'food in image'}": {item: string, calories: number, protein: number, carbs: number, fat: number}`;
     }
 
-    if (isApiKeyConfigured) {
-      try {
-        const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
-        const requestPayload = [prompt];
-        
-        if (hasFile) {
-          requestPayload.push({
-            inlineData: {
-              data: processedImageBuffer.toString('base64'),
-              mimeType: mode === 'Experimental' ? 'image/webp' : req.file.mimetype
+    // Determine which API client and model to call based on the live requests made count
+    const turnIndex = liveRequestsMade % 20;
+    let apiUsed = 'Gemini';
+    let modelUsed = 'gemini-3.5-flash';
+
+    if (turnIndex < 5) {
+      apiUsed = 'Gemini';
+      modelUsed = 'gemini-3.5-flash';
+    } else if (turnIndex < 10) {
+      apiUsed = 'OpenRouter';
+      modelUsed = FREE_TEXT_MODEL; // meta-llama/llama-3.3-70b-instruct:free
+    } else if (turnIndex < 15) {
+      apiUsed = 'Gemini';
+      modelUsed = 'gemini-3.5-flash';
+    } else {
+      apiUsed = 'OpenRouter';
+      modelUsed = FREE_VISION_MODEL; // google/gemma-2-9b-it:free
+    }
+
+    console.log(`[BACKEND] Rotation selection: Live request count: ${liveRequestsMade}. Turn index: ${turnIndex}. Chosen API: ${apiUsed}, Model: ${modelUsed}`);
+
+    if (liveRequestsMade < MAX_LIVE_REQUESTS) {
+      liveRequestsMade++; // Increment immediately to reflect that a live call is counted
+      if (apiUsed === 'OpenRouter') {
+        const openRouterResult = await callOpenRouter(prompt, processedImageBuffer, mode, hasFile ? req.file.mimetype : null, modelUsed);
+        if (openRouterResult) {
+          rawTextResponse = openRouterResult.text;
+          promptTokens = openRouterResult.usage.promptTokens;
+          candidatesTokens = openRouterResult.usage.candidatesTokens;
+          totalTokens = openRouterResult.usage.totalTokens;
+
+          // Parse output
+          if (mode === 'Control') {
+            const jsonStart = rawTextResponse.indexOf('JSON_START');
+            const jsonEnd = rawTextResponse.indexOf('JSON_END');
+            let jsonContent = null;
+            if (jsonStart !== -1 && jsonEnd !== -1) {
+              const rawJson = rawTextResponse.substring(jsonStart + 10, jsonEnd).trim();
+              jsonContent = parseGeminiJson(rawJson);
+            } else {
+              jsonContent = parseGeminiJson(rawTextResponse);
             }
-          });
-        }
 
-        const result = await model.generateContent(requestPayload);
-        const response = await result.response;
-        rawTextResponse = response.text();
-        
-        // Extract metadata usage tokens
-        const usage = response.usageMetadata || {};
-        promptTokens = usage.promptTokenCount || usage.promptTokens || 0;
-        candidatesTokens = usage.candidatesTokenCount || usage.candidatesTokens || 0;
-        totalTokens = usage.totalTokenCount || usage.totalTokens || (promptTokens + candidatesTokens) || 0;
-        
-        if (mode === 'Control') {
-          // Extract JSON block from Control response
-          const jsonStart = rawTextResponse.indexOf('JSON_START');
-          const jsonEnd = rawTextResponse.indexOf('JSON_END');
-          let jsonContent = null;
-          if (jsonStart !== -1 && jsonEnd !== -1) {
-            const rawJson = rawTextResponse.substring(jsonStart + 10, jsonEnd).trim();
-            jsonContent = parseGeminiJson(rawJson);
+            parsedFoodData = {
+              item: jsonContent?.item || cleanMealTag || 'Identified Food',
+              calories: jsonContent?.calories || 380,
+              protein: jsonContent?.protein || 18,
+              carbs: jsonContent?.carbs || 45,
+              fat: jsonContent?.fat || 12,
+              explanation: rawTextResponse.replace(/JSON_START[\s\S]*JSON_END/, '').trim()
+            };
           } else {
-            jsonContent = parseGeminiJson(rawTextResponse);
+            const jsonContent = parseGeminiJson(rawTextResponse);
+            parsedFoodData = {
+              item: jsonContent?.item || cleanMealTag || 'Identified Food',
+              calories: jsonContent?.calories || 380,
+              protein: jsonContent?.protein || 18,
+              carbs: jsonContent?.carbs || 45,
+              fat: jsonContent?.fat || 12,
+              explanation: `Successfully processed using green compressed pipeline. Output size: ${optimizedFileSizeKB.toFixed(1)} KB.`
+            };
           }
-
-          parsedFoodData = {
-            item: jsonContent?.item || cleanMealTag || 'Identified Food',
-            calories: jsonContent?.calories || 380,
-            protein: jsonContent?.protein || 18,
-            carbs: jsonContent?.carbs || 45,
-            fat: jsonContent?.fat || 12,
-            explanation: rawTextResponse.replace(/JSON_START[\s\S]*JSON_END/, '').trim()
-          };
         } else {
-          // Experimental Mode - direct JSON
-          const jsonContent = parseGeminiJson(rawTextResponse);
-          parsedFoodData = {
-            item: jsonContent?.item || cleanMealTag || 'Identified Food',
-            calories: jsonContent?.calories || 380,
-            protein: jsonContent?.protein || 18,
-            carbs: jsonContent?.carbs || 45,
-            fat: jsonContent?.fat || 12,
-            explanation: `Successfully processed using green compressed pipeline. Output size: ${optimizedFileSizeKB.toFixed(1)} KB.`
-          };
+          console.warn(`[BACKEND] OpenRouter call failed for ${modelUsed}. Will fall back to local simulation.`);
         }
-      } catch (geminiError) {
-        console.error('Gemini API call failed, falling back to local simulation:', geminiError);
-        // Set api configured false dynamically for this request to trigger fallback below
+      } else {
+        // Use Gemini API
+        const genAI = getGeminiClient();
+        if (genAI) {
+          try {
+            console.log(`[BACKEND] Calling Gemini 3.5 Flash API (Live Call #${liveRequestsMade})...`);
+            const model = genAI.getGenerativeModel({ model: modelUsed });
+            const requestPayload = [prompt];
+            
+            if (hasFile) {
+              requestPayload.push({
+                inlineData: {
+                  data: processedImageBuffer.toString('base64'),
+                  mimeType: mode === 'Experimental' ? 'image/webp' : req.file.mimetype
+                }
+              });
+            }
+
+            const result = await model.generateContent(requestPayload);
+            console.log(`[BACKEND] Gemini API response received!`);
+            const response = await result.response;
+            rawTextResponse = response.text();
+            console.log(`[BACKEND] Gemini response text: ${rawTextResponse.substring(0, 100)}...`);
+          
+            const usage = response.usageMetadata || {};
+            promptTokens = usage.promptTokenCount || usage.promptTokens || 0;
+            candidatesTokens = usage.candidatesTokenCount || usage.candidatesTokens || 0;
+            totalTokens = usage.totalTokenCount || usage.totalTokens || (promptTokens + candidatesTokens) || 0;
+            
+            if (mode === 'Control') {
+              const jsonStart = rawTextResponse.indexOf('JSON_START');
+              const jsonEnd = rawTextResponse.indexOf('JSON_END');
+              let jsonContent = null;
+              if (jsonStart !== -1 && jsonEnd !== -1) {
+                const rawJson = rawTextResponse.substring(jsonStart + 10, jsonEnd).trim();
+                jsonContent = parseGeminiJson(rawJson);
+              } else {
+                jsonContent = parseGeminiJson(rawTextResponse);
+              }
+
+              parsedFoodData = {
+                item: jsonContent?.item || cleanMealTag || 'Identified Food',
+                calories: jsonContent?.calories || 380,
+                protein: jsonContent?.protein || 18,
+                carbs: jsonContent?.carbs || 45,
+                fat: jsonContent?.fat || 12,
+                explanation: rawTextResponse.replace(/JSON_START[\s\S]*JSON_END/, '').trim()
+              };
+            } else {
+              const jsonContent = parseGeminiJson(rawTextResponse);
+              parsedFoodData = {
+                item: jsonContent?.item || cleanMealTag || 'Identified Food',
+                calories: jsonContent?.calories || 380,
+                protein: jsonContent?.protein || 18,
+                carbs: jsonContent?.carbs || 45,
+                fat: jsonContent?.fat || 12,
+                explanation: `Successfully processed using green compressed pipeline. Output size: ${optimizedFileSizeKB.toFixed(1)} KB.`
+              };
+            }
+          } catch (geminiError) {
+            console.error('Gemini API call failed, falling back to local simulation:', geminiError);
+          }
+        } else {
+          console.warn('[BACKEND] Gemini API client not configured or missing key.');
+        }
       }
     }
 
@@ -278,13 +472,15 @@ export const analyzeMeal = async (req, res) => {
           : mockResult.explanation
       };
 
-      // Set mock token usage
+      // Set mock token usage with realistic variance based on image size and meal tag length
+      const tagLengthFactor = cleanMealTag ? cleanMealTag.length * 3 : 15;
+      
       if (mode === 'Control') {
-        promptTokens = 480;
-        candidatesTokens = 190;
+        promptTokens = 450 + tagLengthFactor + Math.floor(Math.random() * 30);
+        candidatesTokens = 180 + Math.floor(Math.random() * 40);
       } else {
-        promptTokens = 85;
-        candidatesTokens = 40;
+        promptTokens = 75 + Math.floor(tagLengthFactor / 4) + Math.floor(Math.random() * 10);
+        candidatesTokens = 35 + Math.floor(Math.random() * 15);
       }
       totalTokens = promptTokens + candidatesTokens;
     }
@@ -333,7 +529,7 @@ export const analyzeMeal = async (req, res) => {
       optimizedFileSizeKB,
       regionalCarbonFactor: mode === 'Control' ? 'high' : 'low',
       calculatedVirtualCost,
-      mealTag: cleanMealTag || parsedFoodData.item,
+      mealTag: parsedFoodData.item || cleanMealTag || 'Identified Food',
       imageHash,
       foodData: parsedFoodData,
       simulatedEgressFee,
@@ -341,7 +537,9 @@ export const analyzeMeal = async (req, res) => {
       s3TtlDays: mode === 'Experimental' ? 7 : null
     });
 
+    console.log(`[BACKEND] Saving log to MongoMemoryServer...`);
     await newLog.save();
+    console.log(`[BACKEND] Log saved successfully!`);
 
     const cumulativeCost = await getCumulativeCost();
     let budgetViolation = false;
@@ -388,7 +586,8 @@ export const getTelemetry = async (req, res) => {
 export const resetLogs = async (req, res) => {
   try {
     await SprintLog.deleteMany({});
-    console.log('Database wiped! Telemetry metrics reset.');
+    liveRequestsMade = 0;
+    console.log('Database wiped! Telemetry metrics reset. Live request counter reset.');
     return res.status(200).json({
       message: 'Telemetry database wiped successfully.',
       cumulativeCost: 0,
@@ -400,3 +599,174 @@ export const resetLogs = async (req, res) => {
     return res.status(500).json({ error: 'Failed to clear telemetry logs.' });
   }
 };
+
+export const simulateSprint = async (req, res) => {
+  try {
+    const { mode } = req.body;
+    if (mode !== 'Control' && mode !== 'Experimental') {
+      return res.status(400).json({ error: 'Invalid mode. Must be Control or Experimental.' });
+    }
+
+    const SIMULATION_ITEMS = [
+      { tag: 'Apple', originalSize: 1200 },
+      { tag: 'Salad', originalSize: 2400 },
+      { tag: 'Pizza', originalSize: 3100 },
+      { tag: 'Salad', originalSize: 2400 }, // Duplicate -> cache hit in Experimental
+      { tag: 'Burger', originalSize: 3500 },
+      { tag: 'Apple', originalSize: 1200 }, // Duplicate -> cache hit in Experimental
+      { tag: 'Chicken', originalSize: 1800 },
+      { tag: 'Burger', originalSize: 3500 }, // Duplicate -> cache hit in Experimental
+      { tag: 'Eggs', originalSize: 1500 },
+      { tag: 'Chicken', originalSize: 1800 }  // Duplicate -> cache hit in Experimental
+    ];
+
+    const logsToSave = [];
+    const seenTags = new Set();
+    const now = Date.now();
+
+    for (let i = 0; i < SIMULATION_ITEMS.length; i++) {
+      const item = SIMULATION_ITEMS[i];
+      const mealTag = item.tag;
+      const originalFileSizeKB = item.originalSize;
+      const mealData = getMockMealData(mealTag);
+      
+      // Separate timestamps slightly so they have a sequence in logs (e.g. 2 mins apart)
+      const timestamp = new Date(now - (SIMULATION_ITEMS.length - i) * 120000);
+
+      if (mode === 'Control') {
+        const promptTokens = 450 + Math.floor(Math.random() * 50);
+        const candidatesTokens = 180 + Math.floor(Math.random() * 30);
+        const totalTokens = promptTokens + candidatesTokens;
+        
+        const inputCost = (promptTokens / 1000000) * 0.075;
+        const outputCost = (candidatesTokens / 1000000) * 0.30;
+        const calculatedVirtualCost = parseFloat((inputCost + outputCost).toFixed(8));
+        
+        const simulatedEgressFee = parseFloat(((originalFileSizeKB / 1024 / 1024) * 0.09).toFixed(8));
+        
+        const computeEnergyKwh = totalTokens * 0.00015;
+        const storageEnergyKwh = originalFileSizeKB * 0.005;
+        const carbonEmissionGrams = parseFloat(((computeEnergyKwh + storageEnergyKwh + 1.2) * 475).toFixed(4));
+
+        logsToSave.push({
+          timestamp,
+          mode: 'Control',
+          promptTokens,
+          candidatesTokens,
+          totalTokens,
+          wasCached: false,
+          originalFileSizeKB,
+          optimizedFileSizeKB: originalFileSizeKB,
+          regionalCarbonFactor: 'high',
+          calculatedVirtualCost,
+          mealTag,
+          imageHash: crypto.createHash('sha256').update(mealTag + timestamp).digest('hex'),
+          foodData: {
+            item: mealData.item,
+            calories: mealData.calories,
+            protein: mealData.protein,
+            carbs: mealData.carbs,
+            fat: mealData.fat,
+            explanation: `[SIMULATED CONTROL] Analyzed ${mealData.item} in us-east-1. Raw prompt design used. No cache search performed.`
+          },
+          simulatedEgressFee,
+          carbonEmissionGrams,
+          s3TtlDays: null
+        });
+      } else {
+        // Experimental Mode
+        const cleanTag = mealTag.toLowerCase();
+        const isCached = seenTags.has(cleanTag);
+        seenTags.add(cleanTag);
+
+        const optimizedFileSizeKB = parseFloat((originalFileSizeKB * 0.22).toFixed(2));
+        const simulatedEgressFee = parseFloat(((optimizedFileSizeKB / 1024 / 1024) * 0.09).toFixed(8));
+
+        if (isCached) {
+          // Cache hit
+          logsToSave.push({
+            timestamp,
+            mode: 'Experimental',
+            promptTokens: 0,
+            candidatesTokens: 0,
+            totalTokens: 0,
+            wasCached: true,
+            originalFileSizeKB,
+            optimizedFileSizeKB,
+            regionalCarbonFactor: 'low',
+            calculatedVirtualCost: 0,
+            mealTag,
+            imageHash: crypto.createHash('sha256').update(mealTag + timestamp).digest('hex'),
+            foodData: {
+              item: mealData.item,
+              calories: mealData.calories,
+              protein: mealData.protein,
+              carbs: mealData.carbs,
+              fat: mealData.fat,
+              explanation: `[SIMULATED CACHE HIT] Bypassed Gemini API model completely. Output size: ${optimizedFileSizeKB.toFixed(1)} KB.`
+            },
+            simulatedEgressFee,
+            carbonEmissionGrams: 0.002,
+            s3TtlDays: 7
+          });
+        } else {
+          // Cache miss in experimental (prompt distilled, compressed, low carbon region)
+          const promptTokens = 80 + Math.floor(Math.random() * 10);
+          const candidatesTokens = 35 + Math.floor(Math.random() * 10);
+          const totalTokens = promptTokens + candidatesTokens;
+
+          const inputCost = (promptTokens / 1000000) * 0.075;
+          const outputCost = (candidatesTokens / 1000000) * 0.30;
+          const calculatedVirtualCost = parseFloat((inputCost + outputCost).toFixed(8));
+
+          const computeEnergyKwh = totalTokens * 0.00006;
+          const storageEnergyKwh = optimizedFileSizeKB * 0.0008;
+          const carbonEmissionGrams = parseFloat(((computeEnergyKwh + storageEnergyKwh + 0.1) * 50).toFixed(4));
+
+          logsToSave.push({
+            timestamp,
+            mode: 'Experimental',
+            promptTokens,
+            candidatesTokens,
+            totalTokens,
+            wasCached: false,
+            originalFileSizeKB,
+            optimizedFileSizeKB,
+            regionalCarbonFactor: 'low',
+            calculatedVirtualCost,
+            mealTag,
+            imageHash: crypto.createHash('sha256').update(mealTag + timestamp).digest('hex'),
+            foodData: {
+              item: mealData.item,
+              calories: mealData.calories,
+              protein: mealData.protein,
+              carbs: mealData.carbs,
+              fat: mealData.fat,
+              explanation: `[SIMULATED SUSTAIN-AGILE] Processed through distilled green pipeline. Output size: ${optimizedFileSizeKB.toFixed(1)} KB.`
+            },
+            simulatedEgressFee,
+            carbonEmissionGrams,
+            s3TtlDays: 7
+          });
+        }
+      }
+    }
+
+    // Save to Database
+    const savedLogs = await SprintLog.insertMany(logsToSave);
+    
+    // Get cumulative cost
+    const cumulativeCost = await getCumulativeCost();
+
+    return res.status(200).json({
+      message: `Successfully simulated 10-task ${mode} sprint!`,
+      logsCount: savedLogs.length,
+      cumulativeCost
+    });
+
+  } catch (error) {
+    console.error('Sprint simulation error:', error);
+    return res.status(500).json({ error: 'Failed to run sprint simulation.' });
+  }
+};
+
