@@ -151,6 +151,7 @@ export default function App() {
         fat: result.data.fat,
         explanation: result.data.explanation,
         wasCached: result.log.wasCached,
+        totalTokens: result.log.totalTokens,
         mode: result.log.mode
       });
 
@@ -161,7 +162,7 @@ export default function App() {
       // Refresh database records
       await fetchTelemetry();
       
-      setSuccessMsg(result.log.wasCached ? 'Instant cache hit bypass loaded!' : 'Analysis completed successfully!');
+      setSuccessMsg(result.log.wasCached ? `Cache-augmented: re-validated in ${result.log.totalTokens} tokens!` : 'Analysis completed successfully!');
       setTimeout(() => setSuccessMsg(''), 4000);
 
     } catch (err) {
@@ -1094,7 +1095,7 @@ export default function App() {
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                     <polyline points="20 6 9 17 4 12" />
                   </svg>
-                  SEMANTIC CACHE HIT Bypassed Google Gemini API ($0 / 0 Tokens)
+                  SEMANTIC CACHE HIT Re-validated via reduced-token Groq call ({activeResult.totalTokens} tokens)
                 </div>
               )}
 

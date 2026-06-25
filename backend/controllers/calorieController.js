@@ -1,4 +1,3 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import sharp from 'sharp';
 import crypto from 'crypto';
 import * as tf from '@tensorflow/tfjs';
@@ -6,12 +5,65 @@ import * as mobilenet from '@tensorflow-models/mobilenet';
 import SprintLog from '../models/SprintLog.js';
 import { BUDGET_LIMIT, getCumulativeCost } from '../middleware/budgetGate.js';
 
-// Setup Gemini API client lazily to handle dotenv initialization order
-const getGeminiClient = () => {
-  const apiKey = process.env.GEMINI_API_KEY;
-  const isApiKeyConfigured = apiKey && apiKey !== 'YOUR_GEMINI_API_KEY' && apiKey.trim().length > 0;
-  if (!isApiKeyConfigured) return null;
-  return new GoogleGenerativeAI(apiKey);
+// Groq vision-capable model (OpenAI-compatible chat completions API)
+const GROQ_VISION_MODEL = 'meta-llama/llama-4-scout-17b-16e-instruct';
+
+// Call the Groq API (OpenAI-compatible) for text and vision requests
+const callGroq = async (prompt, processedImageBuffer, mode, mimetype, model = GROQ_VISION_MODEL) => {
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey || apiKey === 'YOUR_GROQ_API_KEY' || apiKey.trim().length === 0) return null;
+
+  const hasImage = !!processedImageBuffer;
+
+  try {
+    const messages = [];
+
+    if (hasImage) {
+      const base64Image = processedImageBuffer.toString('base64');
+      const mime = mode === 'Experimental' ? 'image/webp' : (mimetype || 'image/png');
+      messages.push({
+        role: 'user',
+        content: [
+          { type: 'text', text: prompt },
+          { type: 'image_url', image_url: { url: `data:${mime};base64,${base64Image}` } }
+        ]
+      });
+    } else {
+      messages.push({ role: 'user', content: prompt });
+    }
+
+    const payload = { model, messages };
+
+    console.log(`[BACKEND] Sending request to Groq (${model})...`);
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    });
+
+    if (response.status !== 200) {
+      const errorBody = await response.text();
+      console.warn(`[BACKEND] Groq error ${response.status} with ${model}: ${errorBody}`);
+      return null;
+    }
+
+    const data = await response.json();
+    console.log(`[BACKEND] Groq (${model}) responded successfully.`);
+    return {
+      text: data.choices?.[0]?.message?.content || '',
+      usage: {
+        promptTokens: data.usage?.prompt_tokens || 0,
+        candidatesTokens: data.usage?.completion_tokens || 0,
+        totalTokens: data.usage?.total_tokens || 0
+      }
+    };
+  } catch (err) {
+    console.error('[BACKEND] Groq call failed:', err);
+    return null;
+  }
 };
 
 // Free OpenRouter models — Llama 3.3 70B as primary (less congested), Gemma 2 9B as vision secondary
@@ -118,7 +170,9 @@ const classifyImageBuffer = async (imageBuffer) => {
 };
 
 let liveRequestsMade = 0;
-const MAX_LIVE_REQUESTS = 20;
+// High cap so live Groq calls keep firing during a demo. Reset via the
+// telemetry reset endpoint to zero the counter at any time.
+const MAX_LIVE_REQUESTS = 1000;
 
 // Regex helper to extract and parse JSON from Gemini's response
 const parseGeminiJson = (text) => {
@@ -180,14 +234,18 @@ export const analyzeMeal = async (req, res) => {
     let cleanMealTag = mealTag ? mealTag.trim() : '';
     console.log(`[BACKEND] Received /api/analyze-meal request. Mode: ${mode}, Tag: ${cleanMealTag}, HasFile: ${!!req.file}`);
 
+    // Local MobileNet runs as an edge "green" pre-classifier and a soft hint only.
+    // Its labels are coarse (e.g. "Plate", "Tray"), so the vision AI — which sees
+    // the actual image — remains the source of truth for the meal identity.
+    let localHint = '';
     if (req.file) {
       console.log('[BACKEND] Image uploaded, running local TensorFlow/MobileNet classification...');
       const detectedTag = await classifyImageBuffer(req.file.buffer);
       if (detectedTag) {
-        console.log(`[BACKEND] Local MobileNet classified image as: ${detectedTag}`);
-        cleanMealTag = detectedTag;
+        console.log(`[BACKEND] Local MobileNet hint: ${detectedTag}`);
+        localHint = detectedTag;
       } else {
-        console.log('[BACKEND] Local classification returned null, using request tag:', cleanMealTag);
+        console.log('[BACKEND] Local classification returned null.');
       }
     }
 
@@ -204,8 +262,14 @@ export const analyzeMeal = async (req, res) => {
     }
 
     // ==========================================
-    // 1. EXPERIMENTAL MODE - CACHE CHECK
+    // 1. EXPERIMENTAL MODE - SEMANTIC CACHE LOOKUP
     // ==========================================
+    // A cache hit no longer bypasses the model. Instead we feed the cached
+    // nutrition back to the AI as grounding for a small, image-free "refine"
+    // call (cache-augmented generation). This still costs a few tokens -- far
+    // fewer than a cold analysis -- and returns a fresh response rather than a
+    // verbatim replay of the previous answer.
+    let cacheHitData = null;
     if (mode === 'Experimental') {
       let cachedLog = null;
 
@@ -225,60 +289,9 @@ export const analyzeMeal = async (req, res) => {
         }).sort({ timestamp: -1 });
       }
 
-      if (cachedLog) {
-        // Cache Hit! Return cached data immediately at $0 cost and 0 tokens.
-        let optimizedFileSizeKB = originalFileSizeKB;
-        
-        if (hasFile) {
-          try {
-            // Compress the image to simulate WebP optimized size even for cached log
-            const compressed = await sharp(req.file.buffer)
-              .resize(600, null, { withoutEnlargement: true })
-              .webp({ quality: 80 })
-              .toBuffer();
-            optimizedFileSizeKB = parseFloat((compressed.length / 1024).toFixed(2));
-          } catch (err) {
-            console.error('Sharp compression during cache hit failed, using default ratio:', err);
-            optimizedFileSizeKB = parseFloat((originalFileSizeKB * 0.25).toFixed(2)); // Default 75% savings
-          }
-        }
-
-        const simulatedEgressFee = parseFloat(((optimizedFileSizeKB / 1024 / 1024) * 0.09).toFixed(8)); // $0.09 per GB
-        
-        // Low environmental factor (eu-west-1): 50 g CO2eq / kWh.
-        // Database cache hit requires virtually zero energy. Let's log 0.002 grams.
-        const carbonEmissionGrams = 0.002;
-
-        const newLog = new SprintLog({
-          mode: 'Experimental',
-          promptTokens: 0,
-          candidatesTokens: 0,
-          totalTokens: 0,
-          wasCached: true,
-          originalFileSizeKB,
-          optimizedFileSizeKB,
-          regionalCarbonFactor: 'low',
-          calculatedVirtualCost: 0,
-          mealTag: cachedLog.mealTag || cleanMealTag,
-          imageHash: imageHash || cachedLog.imageHash,
-          foodData: cachedLog.foodData,
-          simulatedEgressFee,
-          carbonEmissionGrams,
-          s3TtlDays: 7
-        });
-
-        await newLog.save();
-        
-        const cumulativeCost = await getCumulativeCost();
-
-        return res.status(200).json({
-          message: 'Cache hit! Retrieved nutrition details in 0ms.',
-          data: cachedLog.foodData,
-          log: newLog,
-          cumulativeCost,
-          budgetLimit: BUDGET_LIMIT,
-          budgetViolation: false
-        });
+      if (cachedLog && cachedLog.foodData) {
+        cacheHitData = cachedLog.foodData;
+        console.log(`[BACKEND] Semantic cache hit for "${cachedLog.mealTag}". Routing to reduced-token cache-augmented AI call.`);
       }
     }
 
@@ -313,147 +326,105 @@ export const analyzeMeal = async (req, res) => {
     let totalTokens = 0;
     let rawTextResponse = '';
 
+    // What the model should analyze. With an image we ask the vision model to
+    // identify the dish itself; a coarse local hint is offered but the model is
+    // told to override it. A typed tag (no image) is treated as authoritative.
+    const subject = hasFile
+      ? `the meal shown in this image${localHint ? ` (a local classifier loosely guessed "${localHint}", but identify the actual dish from the image and ignore that guess if it is wrong)` : ''}`
+      : `the food item "${cleanMealTag}"`;
+
     if (mode === 'Control') {
-      prompt = `You are an elite nutritionist. Carefully analyze the food item "${cleanMealTag || 'shown in this image'}"${hasFile ? ' in this image' : ''}. Identify every ingredient, estimate its weight in grams, and calculate the total calories, protein, carbs, and fats. Provide a detailed breakdown explanation.
-      
+      prompt = `You are an elite nutritionist. Carefully analyze ${subject}. Identify the dish and every ingredient, estimate each weight in grams, and calculate the total calories, protein, carbs, and fats. Provide a detailed breakdown explanation.
+
       At the very end of your response, output a JSON block matching this schema so the system can parse the metrics:
-      JSON_START { "item": "${cleanMealTag || 'Name of primary food item'}", "calories": total_calories_number, "protein": total_protein_grams_number, "carbs": total_carbs_grams_number, "fat": total_fat_grams_number } JSON_END`;
+      JSON_START { "item": "concise name of the identified dish", "calories": total_calories_number, "protein": total_protein_grams_number, "carbs": total_carbs_grams_number, "fat": total_fat_grams_number } JSON_END`;
+    } else if (cacheHitData) {
+      // Experimental + semantic cache hit -> tiny grounded "refine" prompt.
+      // Text-only (no image) and seeded with the cached values, so the model
+      // spends very few tokens confirming/adjusting rather than analysing cold.
+      prompt = `Known nutrition for "${cacheHitData.item}" from cache: ${JSON.stringify({
+        item: cacheHitData.item,
+        calories: cacheHitData.calories,
+        protein: cacheHitData.protein,
+        carbs: cacheHitData.carbs,
+        fat: cacheHitData.fat
+      })}. Briefly re-validate and return JSON only: {item: string, calories: number, protein: number, carbs: number, fat: number, breakdown: string (one short sentence summarising the dish and its macros)}. Keep the values unless clearly wrong.`;
     } else {
-      // Experimental Mode - Compressed Prompt
-      prompt = `Return JSON only for "${cleanMealTag || 'food in image'}": {item: string, calories: number, protein: number, carbs: number, fat: number}`;
+      // Experimental Mode - Compressed Prompt (still asks for a short breakdown)
+      prompt = `Identify ${subject} and return JSON only: {item: concise dish name (string), calories: number, protein: number, carbs: number, fat: number, breakdown: string (2-3 concise sentences listing the main ingredients and macro contributions)}`;
     }
 
-    // Determine which API client and model to call based on the live requests made count
-    const turnIndex = liveRequestsMade % 20;
-    let apiUsed = 'Gemini';
-    let modelUsed = 'gemini-3.5-flash';
+    // On a cache-augmented call we deliberately omit the image to minimise tokens.
+    const callImageBuffer = cacheHitData ? null : processedImageBuffer;
+    const callMimetype = cacheHitData ? null : (hasFile ? req.file.mimetype : null);
 
-    if (turnIndex < 5) {
-      apiUsed = 'Gemini';
-      modelUsed = 'gemini-3.5-flash';
-    } else if (turnIndex < 10) {
-      apiUsed = 'OpenRouter';
-      modelUsed = FREE_TEXT_MODEL; // meta-llama/llama-3.3-70b-instruct:free
-    } else if (turnIndex < 15) {
-      apiUsed = 'Gemini';
-      modelUsed = 'gemini-3.5-flash';
-    } else {
-      apiUsed = 'OpenRouter';
-      modelUsed = FREE_VISION_MODEL; // google/gemma-2-9b-it:free
-    }
-
-    console.log(`[BACKEND] Rotation selection: Live request count: ${liveRequestsMade}. Turn index: ${turnIndex}. Chosen API: ${apiUsed}, Model: ${modelUsed}`);
+    // Primary live provider is Groq. OpenRouter is only used as an automatic
+    // fallback when it is configured and Groq fails.
+    let apiUsed = 'Groq';
+    let modelUsed = GROQ_VISION_MODEL;
 
     if (liveRequestsMade < MAX_LIVE_REQUESTS) {
       liveRequestsMade++; // Increment immediately to reflect that a live call is counted
-      if (apiUsed === 'OpenRouter') {
-        const openRouterResult = await callOpenRouter(prompt, processedImageBuffer, mode, hasFile ? req.file.mimetype : null, modelUsed);
-        if (openRouterResult) {
-          rawTextResponse = openRouterResult.text;
-          promptTokens = openRouterResult.usage.promptTokens;
-          candidatesTokens = openRouterResult.usage.candidatesTokens;
-          totalTokens = openRouterResult.usage.totalTokens;
 
-          // Parse output
-          if (mode === 'Control') {
-            const jsonStart = rawTextResponse.indexOf('JSON_START');
-            const jsonEnd = rawTextResponse.indexOf('JSON_END');
-            let jsonContent = null;
-            if (jsonStart !== -1 && jsonEnd !== -1) {
-              const rawJson = rawTextResponse.substring(jsonStart + 10, jsonEnd).trim();
-              jsonContent = parseGeminiJson(rawJson);
-            } else {
-              jsonContent = parseGeminiJson(rawTextResponse);
-            }
+      console.log(`[BACKEND] Calling Groq API ${modelUsed}${cacheHitData ? ' (cache-augmented, image-free)' : ''} (Live Call #${liveRequestsMade})...`);
+      let aiResult = await callGroq(prompt, callImageBuffer, mode, callMimetype, modelUsed);
 
-            parsedFoodData = {
-              item: jsonContent?.item || cleanMealTag || 'Identified Food',
-              calories: jsonContent?.calories || 380,
-              protein: jsonContent?.protein || 18,
-              carbs: jsonContent?.carbs || 45,
-              fat: jsonContent?.fat || 12,
-              explanation: rawTextResponse.replace(/JSON_START[\s\S]*JSON_END/, '').trim()
-            };
-          } else {
-            const jsonContent = parseGeminiJson(rawTextResponse);
-            parsedFoodData = {
-              item: jsonContent?.item || cleanMealTag || 'Identified Food',
-              calories: jsonContent?.calories || 380,
-              protein: jsonContent?.protein || 18,
-              carbs: jsonContent?.carbs || 45,
-              fat: jsonContent?.fat || 12,
-              explanation: `Successfully processed using green compressed pipeline. Output size: ${optimizedFileSizeKB.toFixed(1)} KB.`
-            };
-          }
-        } else {
-          console.warn(`[BACKEND] OpenRouter call failed for ${modelUsed}. Will fall back to local simulation.`);
-        }
-      } else {
-        // Use Gemini API
-        const genAI = getGeminiClient();
-        if (genAI) {
-          try {
-            console.log(`[BACKEND] Calling Gemini 3.5 Flash API (Live Call #${liveRequestsMade})...`);
-            const model = genAI.getGenerativeModel({ model: modelUsed });
-            const requestPayload = [prompt];
-            
-            if (hasFile) {
-              requestPayload.push({
-                inlineData: {
-                  data: processedImageBuffer.toString('base64'),
-                  mimeType: mode === 'Experimental' ? 'image/webp' : req.file.mimetype
-                }
-              });
-            }
-
-            const result = await model.generateContent(requestPayload);
-            console.log(`[BACKEND] Gemini API response received!`);
-            const response = await result.response;
-            rawTextResponse = response.text();
-            console.log(`[BACKEND] Gemini response text: ${rawTextResponse.substring(0, 100)}...`);
-          
-            const usage = response.usageMetadata || {};
-            promptTokens = usage.promptTokenCount || usage.promptTokens || 0;
-            candidatesTokens = usage.candidatesTokenCount || usage.candidatesTokens || 0;
-            totalTokens = usage.totalTokenCount || usage.totalTokens || (promptTokens + candidatesTokens) || 0;
-            
-            if (mode === 'Control') {
-              const jsonStart = rawTextResponse.indexOf('JSON_START');
-              const jsonEnd = rawTextResponse.indexOf('JSON_END');
-              let jsonContent = null;
-              if (jsonStart !== -1 && jsonEnd !== -1) {
-                const rawJson = rawTextResponse.substring(jsonStart + 10, jsonEnd).trim();
-                jsonContent = parseGeminiJson(rawJson);
-              } else {
-                jsonContent = parseGeminiJson(rawTextResponse);
-              }
-
-              parsedFoodData = {
-                item: jsonContent?.item || cleanMealTag || 'Identified Food',
-                calories: jsonContent?.calories || 380,
-                protein: jsonContent?.protein || 18,
-                carbs: jsonContent?.carbs || 45,
-                fat: jsonContent?.fat || 12,
-                explanation: rawTextResponse.replace(/JSON_START[\s\S]*JSON_END/, '').trim()
-              };
-            } else {
-              const jsonContent = parseGeminiJson(rawTextResponse);
-              parsedFoodData = {
-                item: jsonContent?.item || cleanMealTag || 'Identified Food',
-                calories: jsonContent?.calories || 380,
-                protein: jsonContent?.protein || 18,
-                carbs: jsonContent?.carbs || 45,
-                fat: jsonContent?.fat || 12,
-                explanation: `Successfully processed using green compressed pipeline. Output size: ${optimizedFileSizeKB.toFixed(1)} KB.`
-              };
-            }
-          } catch (geminiError) {
-            console.error('Gemini API call failed, falling back to local simulation:', geminiError);
-          }
-        } else {
-          console.warn('[BACKEND] Gemini API client not configured or missing key.');
+      // Fallback to OpenRouter (only fires if its key is configured)
+      if (!aiResult) {
+        const orModel = callImageBuffer ? FREE_VISION_MODEL : FREE_TEXT_MODEL;
+        console.warn(`[BACKEND] Groq unavailable. Trying OpenRouter fallback (${orModel})...`);
+        const orResult = await callOpenRouter(prompt, callImageBuffer, mode, callMimetype, orModel);
+        if (orResult) {
+          aiResult = orResult;
+          apiUsed = 'OpenRouter';
+          modelUsed = orModel;
         }
       }
+
+      if (aiResult) {
+        rawTextResponse = aiResult.text;
+        promptTokens = aiResult.usage.promptTokens;
+        candidatesTokens = aiResult.usage.candidatesTokens;
+        totalTokens = aiResult.usage.totalTokens;
+
+        if (mode === 'Control') {
+          const jsonStart = rawTextResponse.indexOf('JSON_START');
+          const jsonEnd = rawTextResponse.indexOf('JSON_END');
+          let jsonContent = null;
+          if (jsonStart !== -1 && jsonEnd !== -1) {
+            const rawJson = rawTextResponse.substring(jsonStart + 10, jsonEnd).trim();
+            jsonContent = parseGeminiJson(rawJson);
+          } else {
+            jsonContent = parseGeminiJson(rawTextResponse);
+          }
+
+          parsedFoodData = {
+            item: jsonContent?.item || cleanMealTag || 'Identified Food',
+            calories: jsonContent?.calories || 380,
+            protein: jsonContent?.protein || 18,
+            carbs: jsonContent?.carbs || 45,
+            fat: jsonContent?.fat || 12,
+            explanation: rawTextResponse.replace(/JSON_START[\s\S]*JSON_END/, '').trim()
+          };
+        } else {
+          const jsonContent = parseGeminiJson(rawTextResponse);
+          parsedFoodData = {
+            item: jsonContent?.item || cacheHitData?.item || cleanMealTag || 'Identified Food',
+            calories: jsonContent?.calories || cacheHitData?.calories || 380,
+            protein: jsonContent?.protein || cacheHitData?.protein || 18,
+            carbs: jsonContent?.carbs || cacheHitData?.carbs || 45,
+            fat: jsonContent?.fat || cacheHitData?.fat || 12,
+            explanation: cacheHitData
+              ? `${jsonContent?.breakdown ? jsonContent.breakdown + '\n\n' : ''}Semantic cache hit: re-validated via a reduced-token, image-free ${apiUsed} call (${totalTokens} tokens vs a full cold analysis).`
+              : `${jsonContent?.breakdown ? jsonContent.breakdown + '\n\n' : ''}Processed via ${apiUsed} green compressed pipeline. Output size: ${optimizedFileSizeKB.toFixed(1)} KB.`
+          };
+        }
+        console.log(`[BACKEND] Live AI response parsed from ${apiUsed} (${modelUsed}).`);
+      } else {
+        console.warn('[BACKEND] No live AI provider returned a result. Falling back to local simulation.');
+      }
+    } else {
+      console.warn(`[BACKEND] Live request cap (${MAX_LIVE_REQUESTS}) reached. Using local simulation. Reset telemetry to re-enable live calls.`);
     }
 
     // High fidelity simulation fallback if Gemini was bypassed/failed
@@ -524,7 +495,7 @@ export const analyzeMeal = async (req, res) => {
       promptTokens,
       candidatesTokens,
       totalTokens,
-      wasCached: false,
+      wasCached: !!cacheHitData,
       originalFileSizeKB,
       optimizedFileSizeKB,
       regionalCarbonFactor: mode === 'Control' ? 'high' : 'low',
@@ -554,7 +525,9 @@ export const analyzeMeal = async (req, res) => {
     }
 
     return res.status(200).json({
-      message: 'Meal parsed successfully!',
+      message: cacheHitData
+        ? `Semantic cache hit! Re-validated with a reduced-token AI call (${totalTokens} tokens).`
+        : 'Meal parsed successfully!',
       data: parsedFoodData,
       log: newLog,
       cumulativeCost,
